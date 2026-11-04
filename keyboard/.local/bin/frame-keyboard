@@ -271,7 +271,7 @@ class Wired:
         try:
             self.fd = os.open(self.node, os.O_RDWR)
         except PermissionError:
-            raise Fail(f"no access to {self.node}: install the udev rule: frame install keyboard")
+            raise Fail(f"no access to {self.node}: install the udev rule: facet install keyboard")
 
     @staticmethod
     def _packet(cmd, index, size, data=b"", npkt=1, pkt=0):

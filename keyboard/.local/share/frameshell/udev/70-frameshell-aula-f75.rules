@@ -1,5 +1,5 @@
 # AULA F75: hidraw access for frame-keyboard without root, for whoever sits at the seat.
-# `frame install keyboard` copies it to /etc/udev/rules.d (udev does not follow it into $HOME);
+# `facet install keyboard` copies it to /etc/udev/rules.d (udev does not follow it into $HOME);
 # then unplug and plug the keyboard (or the dongle) once.
 
 # Keyboard on the USB cable (SinoWealth SH68F90, "BYK916")
