@@ -43,8 +43,8 @@ frames, once the app is live).
 
 ## Your keyboard is not listed
 
-Ask for it on [the board](https://github.com/orgs/facet-shell/projects/1) with the "Keyboard
-support" issue form: the model, `lsusb` with the keyboard plugged in (cable and dongle) and a
+Ask for it on [the board](https://github.com/orgs/facet-shell/projects/1) with an issue (the
+Idea form, "Keyboard support: <model>"): the model, `lsusb` with the keyboard plugged in (cable and dongle) and a
 link to the vendor's Windows app. How a board gets added is in
 [docs/boards/README.md](docs/boards/README.md).
 

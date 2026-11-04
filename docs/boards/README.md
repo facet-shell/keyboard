@@ -59,7 +59,7 @@ Fn layer with the `layers` listed.
 
 ## Asking for a board
 
-Open an issue with the "Keyboard support" form on the
+Open an issue with the Idea form, titled "Keyboard support: <model>", on the
 [facet board](https://github.com/orgs/facet-shell/projects/1) (`facet keyboard request` says the
 same): the model, `lsusb` with the keyboard plugged in (cable and dongle), and a link to the
 vendor's Windows app.
