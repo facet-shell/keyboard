@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""frame-keyboard – lighting and Fn keys of the AULA F75 from Linux, without the vendor app
+"""frame-keyboard – lighting, Fn keys and per-key colors of keyboards from Linux, without the vendor app
 
-Talks to the keyboard over hidraw the way the vendor app (OemDrv.exe, class CDevG5KB) does:
-520-byte feature reports with report ID 6 on the wired USB connection (258a:010c). The protocol
-and where each byte comes from is written down in docs/keyboard.md.
+Which keyboards: one file per board in ~/.local/share/frameshell/keyboard/boards (the registry),
+the protocol of each board family in .../keyboard/families. The board is the one plugged in, or
+the one picked with `frame-keyboard board <id>` (facet keyboard set), or --board.
+Protocol notes per board: docs/boards/ in the keyboard repo.
 
 NOTHING IS SENT UNLESS --live IS GIVEN. Without it every command only prints the packets it
 would send (dry run); reads are skipped and replaced by placeholder blocks. Before each write
@@ -11,552 +12,208 @@ in live mode the current block is read back, checked and saved under
 ${XDG_STATE_HOME:-~/.local/state}/frameshell/keyboard/, so `restore` can put it back.
 
 Usage:
+  frame-keyboard boards [text] | board [<id>] | detect   the registry, the board in use, what is plugged in
   frame-keyboard list                          keyboards and dongles found (sysfs only, sends nothing)
-  frame-keyboard keys | effects                key names / built-in effects
+  frame-keyboard keys | effects | actions      key names / built-in effects / what fn accepts
   frame-keyboard info [--layer fn1]            device id, lighting config and a key layer
-  frame-keyboard backup                        save config, color table, per-key colors, key layers
+  frame-keyboard backup                        save every block the board has
   frame-keyboard restore <file>                write a saved block back
-  frame-keyboard effect <name> [-b 0-9] [-s 0-4] [-c slot|multi|color]
+  frame-keyboard effect <name> [-b N] [-s N] [-c slot|multi|color]
                                                switch the built-in effect (a color goes into the table)
   frame-keyboard fn <key>=<action> ...         set Fn-layer keys (--layer fn1|fn2|base)
   frame-keyboard fn --show | --reset <key>...  print the layer / put keys back to the factory Fn action
-  frame-keyboard colors [--all C] <key>=C ...  per-key colors, kept on the keyboard ("Self-define");
-                                               keys not named keep their color
+  frame-keyboard colors [--all C] <key>=C ...  per-key colors, kept on the keyboard; keys not named keep theirs
   frame-keyboard style solid|split|rows [--keep-effect]
-                                               per-key style from the frameshell theme
+                                               per-key style from the facet theme
   frame-keyboard highlight <key[=C]...> [-c C] [--base C] [--hold | --seconds N | --stdin] [--skip-unknown]
                                                light keys live (RAM only, nothing saved), then stop
   frame-keyboard stop                          end a live frame, back to the saved effect
+  frame-keyboard udev                          udev rules for every board in the registry
 
 Keys use the names of the hotkey overlay (xkb names, lower case): q, return, space, super_l,
 f5, prior ... `--layout de` reads them as QWERTZ (z, y, ssharp, udiaeresis ...).
 Colors: #rrggbb, rrggbb, a theme role (primary, accent, ...) or red/green/blue/white/off.
 
-Options for every command: --live (really send), --hidraw /dev/hidrawN, --verbose (print the
-packets in live mode too), --theme <name>, --layout us|de.
+Options for every command: --live (really send), --board <id>, --hidraw /dev/hidrawN,
+--verbose (print the packets in live mode too), --theme <name>, --layout us|de, --json.
 """
 import argparse
 import contextlib
-import datetime
+import importlib
 import json
 import os
-import re
 import select
 import signal
 import sys
 import time
 from pathlib import Path
 
-WIRED_VID, WIRED_PID = 0x258A, 0x010C
-DONGLE_VID, DONGLE_PID = 0x3554, 0xFA09
 
-# "Psd" in Dev/kb/*/KB.ini: what command 0x82 answers for the boards the app knows as F75
-KNOWN_IDS = {
-    bytes([0x03, 0, 0, 0, 0, 0xCD]): "AULA F75",
-    bytes([0x03, 0, 0, 0, 0, 0xE1]): "AULA F75 Wired",
-    bytes([0x03, 0, 0, 0, 1, 0x91]): "AULA F75 KR",
-}
-
-REPORT_ID = 0x06
-REPORT_LEN = 520          # report ID + 7 header bytes + 512 data bytes
-CHUNK = 512
-
-# Commands on report 6; a read is the same number | 0x80
-CMD_KEYS = 0x03           # key layer, INDEX = layer, MatrixLen * 4 bytes
-CMD_CONFIG = 0x04         # 128-byte lighting/system config, ends in 5A A5
-CMD_PERKEY = 0x06         # "Self-define" per-key colors: planes R, G, B of 126 bytes
-CMD_FRAME = 0x08          # live frame in RAM, 126 x RGB; INDEX 2 + 00 00 00 ends it
-CMD_COLORTAB = 0x0A       # color table: a 21-byte row (7 RGB slots) per effect, 5A A5 at 0x1FA
-CMD_DEVICE_ID = 0x82      # read only, 6 bytes, see KNOWN_IDS
-MATRIX_LEN = 128          # KB.ini MatrixLen: entries per key layer
-LAYER_BYTES = MATRIX_LEN * 4
-PLANE = 126               # per-key plane stride the app uses (0x7e)
-PERKEY_BYTES = MATRIX_LEN * 3   # what the app sends: three planes of 126 and 6 spare bytes
-FRAME_BYTES = 126 * 3     # 0x17a, interleaved R G B per slot
-CONFIG_BYTES = 128
-COLORTAB_BYTES = 512
-
-# The only writes this tool makes, (command, index) -> size. Never 0x05 (macros), 0x11 (reset)
-# or report 5 (bootloader).
-WRITE_SIZES = {
-    **{(CMD_KEYS, layer): LAYER_BYTES for layer in range(4)},
-    (CMD_CONFIG, 0): CONFIG_BYTES, (CMD_PERKEY, 0): PERKEY_BYTES, (CMD_COLORTAB, 0): COLORTAB_BYTES,
-    (CMD_FRAME, 0): FRAME_BYTES, (CMD_FRAME, 2): 3,
-}
-WRITABLE = {cmd for cmd, _ in WRITE_SIZES}
-READABLE = {CMD_KEYS | 0x80, CMD_CONFIG | 0x80, CMD_PERKEY | 0x80, CMD_COLORTAB | 0x80, CMD_DEVICE_ID}
-MARK = b"\x5a\xa5"
-LAYER_END = b"\x00\x00" + MARK  # last entry of every layer when KB.ini says CRC=1
-
-LAYERS = {"base": 0, "fn1": 1, "fn2": 2, "tap": 3}
-FN_SLOT = 53
-
-# Key slot = column * 6 + row: the last field of every K<n> line in Dev/kb/1/KB.ini
-SLOTS = {
-    "esc": 0, "grave": 1, "tab": 2, "caps_lock": 3, "shift_l": 4, "control_l": 5,
-    "1": 7, "q": 8, "a": 9, "z": 10, "super_l": 11,
-    "f1": 12, "2": 13, "w": 14, "s": 15, "x": 16, "alt_l": 17,
-    "f2": 18, "3": 19, "e": 20, "d": 21, "c": 22,
-    "f3": 24, "4": 25, "r": 26, "f": 27, "v": 28,
-    "f4": 30, "5": 31, "t": 32, "g": 33, "b": 34, "space": 35,
-    "f5": 36, "6": 37, "y": 38, "h": 39, "n": 40,
-    "f6": 42, "7": 43, "u": 44, "j": 45, "m": 46,
-    "f7": 48, "8": 49, "i": 50, "k": 51, "comma": 52, "fn": 53,
-    "f8": 54, "9": 55, "o": 56, "l": 57, "period": 58, "control_r": 59,
-    "f9": 60, "0": 61, "p": 62, "semicolon": 63, "slash": 64,
-    "f10": 66, "minus": 67, "bracketleft": 68, "apostrophe": 69, "shift_r": 70,
-    "f11": 72, "equal": 73, "bracketright": 74, "left": 77,
-    "f12": 78, "backspace": 79, "backslash": 80, "return": 81, "up": 82, "down": 83,
-    "knob": 84, "delete": 85, "prior": 86, "next": 87, "end": 88, "right": 89,
-}
-SLOT_NAME = {slot: name for name, slot in SLOTS.items()}
-ALIASES = {
-    "escape": "esc", "caps": "caps_lock", "shift": "shift_l", "lshift": "shift_l",
-    "ctrl": "control_l", "control": "control_l", "lctrl": "control_l", "rctrl": "control_r",
-    "super": "super_l", "win": "super_l", "lwin": "super_l", "meta": "super_l",
-    "alt": "alt_l", "lalt": "alt_l", "rshift": "shift_r", "enter": "return",
-    "del": "delete", "pgup": "prior", "page_up": "prior", "pgdn": "next", "page_down": "next",
-    "wheel": "knob",
-}
-# xkb keysym names of the German layout -> US name of the same physical key
-LAYOUT_DE = {
-    "z": "y", "y": "z", "ssharp": "minus", "dead_acute": "equal", "acute": "equal",
-    "udiaeresis": "bracketleft", "plus": "bracketright", "odiaeresis": "semicolon",
-    "adiaeresis": "apostrophe", "minus": "slash",
-    "numbersign": "backslash",   # guess: an ANSI board has # on the backslash key; ISO slots are unknown
-    "dead_circumflex": "grave", "asciicircum": "grave",
-}
-ROWS = [  # top to bottom, for `keys` and the styles
-    ["esc", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12", "knob"],
-    ["grave", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "minus", "equal", "backspace", "delete"],
-    ["tab", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "bracketleft", "bracketright", "backslash", "prior"],
-    ["caps_lock", "a", "s", "d", "f", "g", "h", "j", "k", "l", "semicolon", "apostrophe", "return", "next"],
-    ["shift_l", "z", "x", "c", "v", "b", "n", "m", "comma", "period", "slash", "shift_r", "up", "end"],
-    ["control_l", "super_l", "alt_l", "space", "fn", "control_r", "left", "down", "right"],
-]
-
-# Built-in effects from the LedOpt lines of KB.ini ("hw effect speed light direct random color"):
-# (LedOpt position, firmware number, name, has speed, has color). Position n owns config bytes
-# 0x38+2n (brightness) and 0x39+2n (speed << 4 | color slot). No effect has a direction on the F75.
-EFFECTS = [
-    (1, 1, "static", False, True), (2, 2, "breathing", True, True), (3, 3, "rainbow", True, False),
-    (4, 4, "flash-away", True, True), (5, 5, "raindrops", True, True),
-    (6, 6, "rainbow-wheel", True, True), (7, 7, "ripples", True, True),
-    (8, 8, "stars", True, True), (9, 9, "shadow", True, True), (10, 10, "snake", True, True),
-    (11, 11, "neon-stream", True, True), (12, 12, "reaction", True, True),
-    (13, 13, "sine-wave", True, True), (14, 14, "scanning", True, True),
-    (15, 15, "windmill", True, False), (16, 16, "waterfall", True, False),
-    (17, 17, "blossoming", True, False), (18, 18, "storm", True, True),
-    (19, 21, "self-define", False, False), (20, 0, "off", False, False),
-]
-EFFECT_BY_NAME = {e[2]: e for e in EFFECTS}
-EFFECT_BY_FW = {e[1]: e for e in EFFECTS}
-SELF_DEFINE = EFFECT_BY_NAME["self-define"]
-MULTI_SLOT = 7            # color slot 7 = "ColorFull" (RandomVal in the app)
-
-# Fn-layer entries are 4 bytes [type, mods, key2, key1]; type 00 key, 02 consumer, 08 lighting
-HID = {**{chr(ord("a") + i): 0x04 + i for i in range(26)},
-       **{str((i + 1) % 10): 0x1E + i for i in range(10)},
-       "return": 0x28, "esc": 0x29, "backspace": 0x2A, "tab": 0x2B, "space": 0x2C, "minus": 0x2D,
-       "equal": 0x2E, "bracketleft": 0x2F, "bracketright": 0x30, "backslash": 0x31,
-       "semicolon": 0x33, "apostrophe": 0x34, "grave": 0x35, "comma": 0x36, "period": 0x37,
-       "slash": 0x38, "caps_lock": 0x39,
-       **{f"f{i}": 0x39 + i for i in range(1, 13)},
-       "print": 0x46, "scroll_lock": 0x47, "pause": 0x48, "insert": 0x49, "home": 0x4A,
-       "prior": 0x4B, "delete": 0x4C, "end": 0x4D, "next": 0x4E, "right": 0x4F, "left": 0x50,
-       "down": 0x51, "up": 0x52, "num_lock": 0x53, "less": 0x64, "menu": 0x65,
-       **{f"f{i}": 0x68 + i - 13 for i in range(13, 25)},
-       "control_l": 0xE0, "shift_l": 0xE1, "alt_l": 0xE2, "super_l": 0xE3,
-       "control_r": 0xE4, "shift_r": 0xE5, "alt_r": 0xE6, "super_r": 0xE7}
-HID_NAME = {}
-for _name, _code in HID.items():
-    HID_NAME.setdefault(_code, _name)
-MODS = [("ctrl", 0x01), ("shift", 0x02), ("alt", 0x04), ("super", 0x08),
-        ("rctrl", 0x10), ("rshift", 0x20), ("ralt", 0x40), ("rsuper", 0x80)]
-MOD_ALIASES = {"control": "ctrl", "win": "super", "altgr": "ralt"}
-MEDIA = {"play": 0xCD, "next-track": 0xB5, "prev-track": 0xB6, "stop": 0xB7, "mute": 0xE2,
-         "volup": 0xE9, "voldown": 0xEA, "mail": 0x18A, "calc": 0x192, "explorer": 0x194,
-         "www": 0x223, "media": 0x183, "bright-up": 0x6F, "bright-down": 0x70}
-LIGHT = {"light-up": (0x08, 0x03, 0x01, 0x00), "light-down": (0x08, 0x03, 0x02, 0x00),
-         "speed-up": (0x08, 0x04, 0x01, 0x00), "speed-down": (0x08, 0x04, 0x02, 0x00),
-         "effect-next": (0x08, 0x02, 0x00, 0x00)}
-# Factory Fn layer ([FN1] in KB.ini, written there as 0xTTMMK2K1), for --reset
-FN_DEFAULTS = {
-    "esc": 0x07000004, "f1": 0x02000223, "f2": 0x0200018A, "f3": 0x0004002B, "f4": 0x00080008,
-    "f5": 0x08030200, "f6": 0x08030100, "f7": 0x020000B6, "f8": 0x020000CD, "f9": 0x020000B5,
-    "f10": 0x020000E2, "f11": 0x020000EA, "f12": 0x020000E9, "grave": 0x07000008,
-    "1": 0x07000005, "2": 0x07000006, "3": 0x07000007, "delete": 0x00000049,
-    "tab": 0x08020000, "q": 0x07000019, "w": 0x07000018, "e": 0x0700001A,
-    "u": 0x00000046, "i": 0x00000047, "o": 0x00000048, "backslash": 0x08000000,
-    "g": 0x0700000A, "b": 0x07000011, "super_l": 0x07000001, "up": 0x08030100,
-    "left": 0x08040200, "down": 0x08030200, "right": 0x08040100, "end": 0x0000004A,
-    "shift_l": 0x08000001, "knob": 0x0700001D,
-}
-
-NAMED_COLORS = {"red": "ff0000", "green": "00ff00", "blue": "0000ff", "white": "ffffff",
-                "off": "000000", "black": "000000", "yellow": "ffff00", "cyan": "00ffff",
-                "magenta": "ff00ff", "orange": "ff8000", "purple": "8000ff"}
-
-# The theme palettes live with the frame command (the cli repo); its link in ~/.local/bin
-# leads there
-CLI_DIR = Path(os.path.realpath(Path.home() / ".local/bin/frame")).parent
-STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "frameshell"
-BACKUP_DIR = STATE_DIR / "keyboard"
+def data_dir():
+    """The registry next to this script in the keyboard module (the link in ~/.local/bin leads
+    there), or the linked copy in ~/.local/share"""
+    env = os.environ.get("FACET_KEYBOARD_DATA")
+    for d in ([Path(env)] if env else []) + [
+            Path(os.path.realpath(__file__)).parents[1] / "share/frameshell/keyboard",
+            Path.home() / ".local/share/frameshell/keyboard"]:
+        if (d / "kblib.py").is_file():
+            return d
+    sys.exit("frame-keyboard: the board registry is missing (~/.local/share/frameshell/keyboard); "
+             "facet update keyboard")
 
 
-class Fail(Exception):
-    pass
+# No __pycache__ inside the module (it is a git checkout)
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(data_dir()))
+import kblib  # noqa: E402
+from kblib import Fail, label, parse_color, theme_colors  # noqa: E402
+
+FAMILIES = {}
 
 
-# ---------------------------------------------------------------- device access
-
-def _ioc(nr, size):
-    return (3 << 30) | (size << 16) | (ord("H") << 8) | nr   # _IOC(READ|WRITE, 'H', nr, size)
-
-
-HIDIOCSFEATURE = _ioc(0x06, REPORT_LEN)
-HIDIOCGFEATURE = _ioc(0x07, REPORT_LEN)
-
-
-def hidraw_nodes():
-    """[(node, vid, pid, interface, has_report6)] read from sysfs; no device is opened."""
-    out = []
-    for dev in sorted(Path("/sys/class/hidraw").glob("hidraw*")):
+def family(name):
+    if name not in FAMILIES:
         try:
-            uevent = (dev / "device/uevent").read_text()
-        except OSError:
-            continue
-        m = re.search(r"HID_ID=\w+:0000([0-9A-F]{4}):0000([0-9A-F]{4})", uevent, re.I)
-        if not m:
-            continue
-        vid, pid = int(m.group(1), 16), int(m.group(2), 16)
-        if (vid, pid) not in ((WIRED_VID, WIRED_PID), (DONGLE_VID, DONGLE_PID)):
-            continue
-        phys = re.search(r"HID_PHYS=\S*input(\d+)", uevent)
-        try:
-            desc = (dev / "device/report_descriptor").read_bytes()
-        except OSError:
-            desc = b""
-        # Vendor page 0xFF00 with report ID 6 is the configuration collection (MI_01)
-        has6 = b"\x06\x00\xff" in desc and b"\x85\x06" in desc
-        out.append((f"/dev/{dev.name}", vid, pid, phys.group(1) if phys else "?", has6))
-    return out
+            FAMILIES[name] = importlib.import_module("families." + name.replace("-", "_"))
+        except ImportError as e:
+            raise Fail(f"no protocol code for the board family '{name}' ({e})")
+    return FAMILIES[name]
 
 
-class Wired:
-    """Report 6 over hidraw. In a dry run nothing is opened or sent."""
+def table_driver(board):
+    """A driver that only knows the board's tables (keys, effects, actions); opens nothing"""
+    d = family(board.family).Driver.__new__(family(board.family).Driver)
+    d.live = False
+    d.use(board)
+    return d
 
-    def __init__(self, live, node=None, verbose=False):
-        self.live, self.verbose, self.node, self.fd = live, verbose, node, None
-        if not live:
+
+def need(board, what, cap):
+    if not board.can.get(cap):
+        raise Fail(f"the {board.name} has no {what} in frame-keyboard (yet)")
+
+
+# ---------------------------------------------------------------- registry commands
+
+def cmd_boards(a, boards):
+    text = " ".join(a.text)
+    hits = [b for b in boards.values() if b.matches(text)] if text else list(boards.values())
+    hits.sort(key=lambda b: (b.vendor.lower(), b.name.lower()))
+    if a.json:
+        return [b.summary() for b in hits]
+    if not hits:
+        print(f"no board matches '{text}'. Ask for yours: {kblib.REQUEST_URL}")
+    for b in hits:
+        state = "tested" if b.tested else "untested"
+        print(f"{b.id:18} {b.name:24} {', '.join(f'{v:04x}:{p:04x}' for v, p, _ in b.usb):22} {b.family} ({state})")
+
+
+def layout_json(board, layout):
+    rows = [[{"id": k, "label": label(k, layout) if k else "", "w": w} for k, w in row] for row in board.layout]
+    return {**board.summary(), "rows": rows, "keys": board.keys, "source": board.data.get("source", "")}
+
+
+def cmd_board(a, boards):
+    if a.id:
+        if a.id not in boards:
+            close = [b.id for b in boards.values() if b.matches(a.id)]
+            raise Fail(f"unknown board '{a.id}'" + (f"; did you mean {', '.join(close)}?" if close else
+                                                    " (frame-keyboard boards)"))
+        kblib.save_board(a.id)
+        if not a.json:
+            print(f"board: {boards[a.id].name} ({a.id}), saved in {kblib.CHOICE_FILE}")
             return
-        nodes = hidraw_nodes()
-        found = [n for n in nodes if (n[1], n[2]) == (WIRED_VID, WIRED_PID) and n[4]]
-        if self.node:
-            # A node given by hand still has to be the F75's configuration interface
-            if os.path.realpath(self.node) not in [n[0] for n in found]:
-                raise Fail(f"{self.node} is not the configuration interface of an AULA F75 "
-                           "(frame-keyboard list)")
-        else:
-            if not found:
-                if any((n[1], n[2]) == (DONGLE_VID, DONGLE_PID) for n in nodes):
-                    raise Fail("only the 2.4 GHz dongle is there; this version talks to the keyboard "
-                               "over the USB cable. Plug the cable in.")
-                raise Fail("no AULA F75 (258a:010c) with its configuration interface found "
-                           "(frame-keyboard list)")
-            if len(found) > 1:
-                raise Fail("more than one candidate: " + ", ".join(n[0] for n in found) +
-                           " (pick one with --hidraw)")
-            self.node = found[0][0]
-        try:
-            self.fd = os.open(self.node, os.O_RDWR)
-        except PermissionError:
-            raise Fail(f"no access to {self.node}: install the udev rule: facet install keyboard")
-
-    @staticmethod
-    def _packet(cmd, index, size, data=b"", npkt=1, pkt=0):
-        buf = bytearray(REPORT_LEN)
-        buf[0:8] = bytes([REPORT_ID, cmd, index, 0, npkt, pkt, size & 0xFF, size >> 8])
-        buf[8:8 + len(data)] = data
-        return buf
-
-    def _show(self, what, buf, payload):
-        if self.live and not self.verbose:
-            return
-        tag = "send" if self.live else "dry-run"
-        print(f"[{tag}] {what}: SET_FEATURE report {buf[0]:02x} cmd {buf[1]:02x} index {buf[2]:02x} "
-              f"packet {buf[5] + 1}/{buf[4]} size {buf[6] | buf[7] << 8}")
-        print("    header " + buf[:8].hex(" "))
-        data = buf[8:8 + payload]
-        for off in range(0, len(data), 16):
-            row = data[off:off + 16]
-            if any(row):
-                print(f"    +{off:03x}  " + row.hex(" "))
-        if payload and not any(data):
-            print("    data all zero")
-
-    def _set(self, buf):
-        import fcntl                       # Linux only; a dry run never gets here
-        for attempt in range(3):           # like the app: 3 tries, 70 ms apart, 20 ms before each
-            time.sleep(0.02)
-            try:
-                fcntl.ioctl(self.fd, HIDIOCSFEATURE, bytes(buf))
-                return
-            except OSError as e:
-                if attempt == 2:
-                    raise Fail(f"SET_FEATURE failed: {e}")
-                time.sleep(0.07)
-
-    def _get(self):
-        import fcntl
-        resp = bytearray(REPORT_LEN)
-        for attempt in range(3):
-            resp[0] = REPORT_ID
-            try:
-                fcntl.ioctl(self.fd, HIDIOCGFEATURE, resp)
-                return resp
-            except OSError as e:
-                if attempt == 2:
-                    raise Fail(f"GET_FEATURE failed: {e}")
-                time.sleep(0.07)
-
-    def write(self, what, cmd, data, index=0, delay=0.0):
-        if cmd not in WRITABLE:
-            raise Fail(f"refusing to write command {cmd:#04x}")
-        if WRITE_SIZES.get((cmd, index)) != len(data):
-            raise Fail(f"refusing to write {len(data)} bytes with command {cmd:#04x} index {index}")
-        chunks = [data[i:i + CHUNK] for i in range(0, len(data), CHUNK)] or [b""]
-        for n, chunk in enumerate(chunks):
-            buf = self._packet(cmd, index, len(chunk), chunk, len(chunks), n)
-            self._show(what, buf, len(chunk))
-            if self.live:
-                time.sleep(delay)
-                self._set(buf)
-
-    def read(self, what, cmd, size, index=0, placeholder=None):
-        """SET_FEATURE with the read command (cmd | 0x80), then GET_FEATURE.
-        A dry run returns the placeholder instead."""
-        cmd |= 0x80
-        if cmd not in READABLE:
-            raise Fail(f"refusing to read with command {cmd:#04x}")
-        if not self.live:
-            print(f"[dry-run] {what}: read skipped (cmd {cmd:02x}), using a placeholder")
-            return bytes(placeholder if placeholder is not None else bytes(size))
-        out = bytearray()
-        npkt = (size + CHUNK - 1) // CHUNK
-        for n in range(npkt):
-            part = min(CHUNK, size - n * CHUNK)
-            buf = self._packet(cmd, index, part, npkt=npkt, pkt=n)
-            self._show(what + " (read request)", buf, 0)
-            self._set(buf)
-            time.sleep(0.02)
-            out += self._get()[8:8 + part]
-        return bytes(out)
+    b = kblib.select_board(boards, a.id or a.board, quiet=a.json)
+    if a.json:
+        return {**layout_json(b, a.layout), "saved": kblib.saved_board()}
+    print(f"{b.name} ({b.id}), family {b.family}, {'tested' if b.tested else 'untested: dry run until you tried it'}")
+    print(f"source: {b.data.get('source', '?')}")
+    print(f"notes: {b.data.get('notes', '-')}")
 
 
-# ---------------------------------------------------------------- blocks
-
-def placeholder_config():
-    cfg = bytearray(CONFIG_BYTES)
-    cfg[0x0A] = 11                     # neon stream, the factory effect
-    cfg[0x0B] = 0x20
-    for pos, *_ in EFFECTS:
-        cfg[0x38 + 2 * pos] = 4
-        cfg[0x39 + 2 * pos] = 2 << 4
-    cfg[0x7E:0x80] = MARK
-    return cfg
-
-
-def placeholder_layer(layer_no=0):
-    """Stand-in for a dry run: base = every key itself, fn1 = the factory Fn layer."""
-    layer = bytearray(LAYER_BYTES)
-    for name, slot in SLOTS.items():
-        if layer_no == LAYERS["base"] and name in HID:
-            layer[slot * 4 + 3] = HID[name]
-        elif layer_no == LAYERS["fn1"] and name in FN_DEFAULTS:
-            layer[slot * 4:slot * 4 + 4] = FN_DEFAULTS[name].to_bytes(4, "big")
-    layer[FN_SLOT * 4:FN_SLOT * 4 + 4] = bytes([0x0D, 0, 0, 0])
-    layer[-4:] = LAYER_END
-    return layer
-
-
-def placeholder_colortab():
-    tab = bytearray(COLORTAB_BYTES)
-    tab[0x1FA:0x1FC] = MARK
-    return tab
-
-
-def check_mark(block, offset, what):
-    if bytes(block[offset:offset + 2]) != MARK:
-        raise Fail(f"{what} has no 5A A5 at {offset:#x} (found {bytes(block[offset:offset + 2]).hex()}); "
-                   "not touching it")
-
-
-def save_backup(kind, data, live):
-    if not live:
-        print(f"[dry-run] would back up the current {kind} ({len(data)} bytes) first")
-        return None
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    path = BACKUP_DIR / f"{stamp}-{kind}.bin"
-    path.write_bytes(data)
-    print(f"backup: {path}")
-    return path
-
-
-def check_model(dev, force=False):
-    # The app asks with index 1 and size 6; the answer is KB.ini's Psd
-    ident = dev.read("device id", CMD_DEVICE_ID, 6, index=1,
-                     placeholder=bytes([0x03, 0, 0, 0, 0, 0xCD]))
-    name = KNOWN_IDS.get(ident)
-    if name:
-        return name, ident
-    if force:
-        print(f"warning: unknown device id {ident.hex(' ')}, going on because of --force-model")
-        return "unknown", ident
-    raise Fail(f"device id {ident.hex(' ')} is none of the F75 ids the vendor app knows; not writing")
-
-
-def read_config(dev):
-    cfg = bytearray(dev.read("lighting config", CMD_CONFIG, CONFIG_BYTES, placeholder=placeholder_config()))
-    check_mark(cfg, 0x7E, "the config block")
-    return cfg
-
-
-def read_layer(dev, layer):
-    data = bytearray(dev.read(f"key layer {layer}", CMD_KEYS, LAYER_BYTES, index=layer,
-                              placeholder=placeholder_layer(layer)))
-    if bytes(data[-4:]) != LAYER_END:
-        raise Fail(f"key layer {layer} does not end in 00 00 5A A5; not touching it")
-    return data
-
-
-# ---------------------------------------------------------------- names, colors, actions
-
-def slot_of(name, layout):
-    key = name.strip().lower()
-    if layout == "de":
-        key = LAYOUT_DE.get(key, key)
-    key = ALIASES.get(key, key)
-    if key not in SLOTS:
-        raise Fail(f"unknown key '{name}' (frame-keyboard keys)")
-    return SLOTS[key]
-
-
-def theme_colors(name=None):
-    if not name:
-        try:
-            name = (STATE_DIR / "theme").read_text().strip()
-        except OSError:
-            name = "periwinkle"
-    try:
-        return json.loads((CLI_DIR / "themes" / f"{name}.json").read_text())["colors"]
-    except (OSError, KeyError, ValueError):
-        return {}
-
-
-def parse_color(text, theme):
-    t = text.strip().lower()
-    t = NAMED_COLORS.get(t, t)
-    t = {k.lower(): v for k, v in theme.items()}.get(t, t).lower().lstrip("#")
-    if not re.fullmatch(r"[0-9a-f]{6}", t):
-        raise Fail(f"not a color: '{text}' (#rrggbb, a theme role or {', '.join(NAMED_COLORS)})")
-    return tuple(int(t[i:i + 2], 16) for i in (0, 2, 4))
-
-
-def parse_action(text, layout="us"):
-    """Fn action -> entry bytes (type, mods, key2, key1). HID usages name physical keys, so a
-    QWERTZ name is turned into the US name of the same key first."""
-    t = text.strip().lower()
-    if t in ("none", "disable"):
-        return (0, 0, 0, 0)
-    if t in LIGHT:
-        return LIGHT[t]
-    if t in MEDIA:
-        return (0x02, 0x00, MEDIA[t] >> 8, MEDIA[t] & 0xFF)
-    if re.fullmatch(r"0x[0-9a-f]{8}", t):          # raw, as KB.ini writes it: 0xTTMMK2K1
-        v = int(t, 16)
-        return (v >> 24, (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF)
-    parts = t.split("+")
-    mod_bits, keys = dict(MODS), []
-    mods = 0
-    for p in parts:
-        p = MOD_ALIASES.get(p, p)
-        if p in mod_bits and len(parts) > 1:
-            mods |= mod_bits[p]
-            continue
-        if layout == "de":
-            p = LAYOUT_DE.get(p, p)
-        p = ALIASES.get(p, p)
-        if p not in HID:
-            raise Fail(f"unknown action '{text}': a key (f5), a combo (ctrl+alt+t), "
-                       f"{', '.join(MEDIA)}, {', '.join(LIGHT)}, none, or 0xTTMMK2K1")
-        keys.append(HID[p])
-    if not 1 <= len(keys) <= 2:
-        raise Fail(f"'{text}': one or two keys, plus modifiers")
-    return (0x00, mods, keys[0] if len(keys) == 2 else 0, keys[-1])
-
-
-def describe_entry(e, layout="us"):
-    typ, mods, k2, k1 = e
-    # Name keys the way the chosen layout labels them (HID usages are US positions)
-    shown = {v: k for k, v in LAYOUT_DE.items()} if layout == "de" else {}
-    if e == (0, 0, 0, 0):
-        return "nothing"
-    if typ == 0x00:
-        names = [n for n, bit in MODS if mods & bit]
-        names += [shown.get(HID_NAME.get(k), HID_NAME.get(k, f"{k:#04x}")) for k in (k2, k1) if k]
-        return "+".join(names)
-    if typ == 0x02:
-        u = (k2 << 8) | k1
-        return next((n for n, v in MEDIA.items() if v == u), f"consumer {u:#06x}")
-    if typ == 0x08:
-        return next((n for n, v in LIGHT.items() if v == e), "lighting " + bytes(e).hex(" "))
-    if typ == 0x0D:
-        return "fn" if mods == 0 else "fn2"
-    if typ == 0x07:
-        return f"keyboard function {k1:#04x} (mode, channel, lock ...)"
-    return "type " + bytes(e).hex(" ")
-
-
-# ---------------------------------------------------------------- commands
-
-def cmd_list(a):
-    nodes = hidraw_nodes()
-    out = [{"node": node, "usb": f"{vid:04x}:{pid:04x}", "kind": "wired" if vid == WIRED_VID else "dongle",
-            "interface": iface, "config": has6 and vid == WIRED_VID} for node, vid, pid, iface, has6 in nodes]
+def cmd_detect(a, boards):
+    found = kblib.connected_boards(boards)
+    out = [{"board": b.id, "name": b.name, "usb": f"{v:04x}:{p:04x}", "link": link} for b, v, p, link in found]
     if a.json:
         return out
-    if not nodes:
-        print("no AULA F75 (258a:010c) and no dongle (3554:fa09) found")
+    if not out:
+        print("no keyboard from the registry is plugged in")
+    for d in out:
+        print(f"{d['usb']}  {d['link']:6}  {d['name']} ({d['board']})")
+    ids = {d["usb"] for d in out}
+    if any(sum(1 for d in out if d["usb"] == u) > 1 for u in ids):
+        print("several boards share this USB id; the device id tells them apart once --live is used. "
+              "Pick yours: facet keyboard set <board>")
+
+
+def cmd_udev(a, boards):
+    print("# facet keyboards: hidraw access for frame-keyboard without root, for whoever sits at the seat.")
+    print("# Written by `facet add keyboard` / `facet update keyboard` from the board registry")
+    print("# (frame-keyboard udev); udev does not follow links into $HOME, so it is a copy.")
+    seen = set()
+    for b in sorted(boards.values(), key=lambda b: b.id):
+        for v, p, link in b.udev:
+            if (v, p) in seen:
+                continue
+            seen.add((v, p))
+            names = sorted({x.name for x in boards.values() if (v, p) in [(u[0], u[1]) for u in x.usb]})
+            print(f"# {', '.join(names)} ({link})")
+            print(f'KERNEL=="hidraw*", ATTRS{{idVendor}}=="{v:04x}", ATTRS{{idProduct}}=="{p:04x}", TAG+="uaccess"')
+
+
+def cmd_list(a, boards):
+    ids = {}
+    for b in boards.values():
+        for v, p, link in b.usb:
+            ids.setdefault((v, p), (link, []))[1].append(b)
+    out = []
+    for node, vid, pid, iface, desc in kblib.hidraw_nodes(set(ids)):
+        link, owners = ids[(vid, pid)]
+        fam = family(owners[0].family)
+        out.append({"node": node, "usb": f"{vid:04x}:{pid:04x}", "kind": link, "interface": iface,
+                    "config": bool(fam.is_config(desc, link)), "boards": [b.id for b in owners]})
+    if a.json:
+        return out
+    if not out:
+        print("no keyboard or dongle from the registry found (frame-keyboard boards)")
     for n in out:
         kind = "keyboard on the USB cable" if n["kind"] == "wired" else "2.4 GHz dongle"
         role = "  <- configuration interface" if n["config"] else ""
         print(f"{n['node']}  {n['usb']}  {kind}, interface {n['interface']}{role}")
 
 
-def cmd_keys(a):
+# ---------------------------------------------------------------- board commands
+
+def cmd_keys(a, board):
+    rows = [[k for k, _ in row if k] for row in board.layout]
     if a.json:
-        return {"rows": ROWS, "slots": SLOTS}
-    for row in ROWS:
+        return {"board": board.id, "rows": rows, "slots": board.keys,
+                "labels": {k: label(k, a.layout) for k in board.keys}}
+    print(board.name)
+    for row in rows:
         print("  ".join(row))
-    print("\n--layout de: " + ", ".join(f"{k} = {v}" for k, v in LAYOUT_DE.items()))
+    extra = sorted(set(board.keys) - {k for r in rows for k in r})
+    if extra:
+        print("also: " + " ".join(extra))
+    print("\n--layout de: " + ", ".join(f"{k} = {v}" for k, v in kblib.LAYOUT_DE.items()))
 
 
-def cmd_effects(a):
+def cmd_effects(a, board):
+    need(board, "built-in effects", "effects")
+    effects = table_driver(board).effects_json()
     if a.json:
-        return [{"name": name, "speed": speed, "color": color} for _, _, name, speed, color in EFFECTS]
+        return effects
     print("effect         speed  color")
-    for _, _, name, speed, color in EFFECTS:
-        print(f"{name:14} {'yes' if speed else '-':6} {'yes' if color else '-'}")
-    print("\nbrightness 0-9 (KB.ini lists ten levels for the F75), speed 0-4, color: slot 0-6 of the "
-          "effect's row in the color table, multi, or any color (it goes into slot 0)")
+    for e in effects:
+        print(f"{e['name']:14} {'yes' if e['speed'] else '-':6} {'yes' if e['color'] else '-'}")
+    print(f"\nbrightness 0-{board.can.get('brightness', '?')}, speed 0-{board.can.get('speed', '?')}, color: "
+          "slot 0-6 of the effect's row in the color table, multi, or any color (it goes into slot 0)")
 
 
-def cmd_actions(a):
+def cmd_actions(a, board):
     """What `fn` accepts besides keys and combos, for front ends."""
-    out = {"media": list(MEDIA), "lighting": list(LIGHT), "mods": [n for n, _ in MODS],
-           "keys": list(HID), "defaults": {k: f"0x{v:08x}" for k, v in FN_DEFAULTS.items()}}
+    need(board, "Fn layer", "fn")
+    out = table_driver(board).actions_json()
     if a.json:
         return out
     for group, names in out.items():
@@ -564,275 +221,57 @@ def cmd_actions(a):
             print(f"{group}: {' '.join(names)}")
 
 
-def show_layer(layer, label, layout="us"):
-    print(f"{label} layer:")
-    for name, slot in sorted(SLOTS.items(), key=lambda kv: kv[1]):
-        e = tuple(layer[slot * 4:slot * 4 + 4])
-        if e != (0, 0, 0, 0):
-            print(f"  {name:13} {bytes(e).hex(' ')}  {describe_entry(e, layout)}")
+def layout_rows(board):
+    return [[k for k, _ in row if k] for row in board.layout]
 
 
-def cmd_info(a, dev):
-    name, ident = check_model(dev, a.force_model)
-    cfg = read_config(dev)
-    eff = EFFECT_BY_FW.get(cfg[0x0A])
-    if a.json:
-        layer = read_layer(dev, LAYERS[a.layer])
-        planes = dev.read("per-key colors", CMD_PERKEY, PERKEY_BYTES)
-        keys, colors = {}, {}
-        for key, slot in SLOTS.items():
-            e = tuple(layer[slot * 4:slot * 4 + 4])
-            if e != (0, 0, 0, 0):
-                keys[key] = {"bytes": bytes(e).hex(" "), "text": describe_entry(e, a.layout)}
-            if slot < PLANE:
-                colors[key] = "#" + bytes((planes[slot], planes[PLANE + slot], planes[2 * PLANE + slot])).hex()
-        return {
-            "dry": not dev.live, "model": name, "id": ident.hex(" "), "node": dev.node,
-            "effect": eff[2] if eff else None, "firmwareEffect": cfg[0x0A],
-            "effects": {e[2]: {"brightness": cfg[0x38 + 2 * e[0]], "speed": cfg[0x39 + 2 * e[0]] >> 4,
-                               "slot": cfg[0x39 + 2 * e[0]] & 0x0F} for e in EFFECTS},
-            "sleep": cfg[0x18], "layer": a.layer, "keys": keys, "colors": colors,
-        }
-    print(f"device: {name}, id {ident.hex(' ')}, {dev.node or 'no node (dry run)'}")
-    print(f"effect: {eff[2] if eff else '?'} (firmware number {cfg[0x0A]}), self-define flag {cfg[0x09]}")
-    if eff:
-        sc = cfg[0x39 + 2 * eff[0]]
-        print(f"        brightness {cfg[0x38 + 2 * eff[0]]}, speed {sc >> 4}, color slot {sc & 0xF}")
-    print(f"debounce byte {cfg[0x03]}, sleep {cfg[0x18]} (half minutes)")
-    print("config: " + cfg.hex(" "))
-    show_layer(read_layer(dev, LAYERS[a.layer]), a.layer, a.layout)
-
-
-def cmd_backup(a, dev):
-    check_model(dev, a.force_model)
-    blocks = [("config", read_config(dev)),
-              ("colortab", dev.read("color table", CMD_COLORTAB, COLORTAB_BYTES,
-                                    placeholder=placeholder_colortab())),
-              ("perkey", dev.read("per-key colors", CMD_PERKEY, PERKEY_BYTES))]
-    blocks += [(f"layer-{name}", read_layer(dev, n)) for name, n in LAYERS.items()]
-    for kind, data in blocks:
-        save_backup(kind, data, dev.live)
-
-
-def cmd_restore(a, dev):
-    path = Path(a.file)
-    m = re.search(r"-(config|colortab|perkey|layer-(base|fn1|fn2|tap))\.bin$", path.name)
-    if not m:
-        raise Fail("restore takes a file from `frame-keyboard backup` (...-config.bin, ...-layer-fn1.bin ...)")
-    data = path.read_bytes()
-    kind = m.group(1)
-    # Check the file completely before anything goes to the keyboard
-    if kind == "config":
-        if len(data) != CONFIG_BYTES:
-            raise Fail("wrong size for a config block")
-        check_mark(data, 0x7E, "the backup")
-    elif kind == "colortab":
-        if len(data) != COLORTAB_BYTES:
-            raise Fail("wrong size for a color table")
-        check_mark(data, 0x1FA, "the backup")
-    elif kind == "perkey":
-        if len(data) != PERKEY_BYTES:
-            raise Fail("wrong size for per-key colors")
-    else:
-        if len(data) != LAYER_BYTES or data[-4:] != LAYER_END:
-            raise Fail("the layer backup has the wrong size or no 00 00 5A A5 at the end")
-        if m.group(2) == "base" and data[FN_SLOT * 4:FN_SLOT * 4 + 4] != b"\x0d\x00\x00\x00":
-            raise Fail("this base layer has no Fn on the Fn key; refusing (Fn would be gone)")
-    check_model(dev, a.force_model)
-    # Like every other write: read and check what is there now and keep a copy of it
-    cfg = read_config(dev)
-    if kind == "config":
-        write_config(dev, bytearray(data), cfg)
-    elif kind == "colortab":
-        old = dev.read("color table", CMD_COLORTAB, COLORTAB_BYTES, placeholder=placeholder_colortab())
-        check_mark(old, 0x1FA, "the color table on the keyboard")
-        save_backup("colortab", old, dev.live)
-        dev.write("color table (restore)", CMD_COLORTAB, data)
-    elif kind == "perkey":
-        save_backup("perkey", dev.read("per-key colors", CMD_PERKEY, PERKEY_BYTES), dev.live)
-        dev.write("per-key colors (restore)", CMD_PERKEY, data)
-        write_config(dev, bytearray(cfg), cfg)
-    else:
-        layer = m.group(2)
-        save_backup(f"layer-{layer}", read_layer(dev, LAYERS[layer]), dev.live)
-        dev.write(f"key layer {layer} (restore)", CMD_KEYS, data, index=LAYERS[layer])
-        write_config(dev, bytearray(cfg), cfg)      # commits the layer, as after `fn`
-
-
-def write_config(dev, cfg, old):
-    check_mark(cfg, 0x7E, "the new config")
-    save_backup("config", old, dev.live)
-    dev.write("lighting config", CMD_CONFIG, cfg, delay=0.06)
-
-
-def cmd_effect(a, dev):
-    if a.name not in EFFECT_BY_NAME:
-        raise Fail(f"unknown effect '{a.name}' (frame-keyboard effects)")
-    pos, fw, name, has_speed, has_color = EFFECT_BY_NAME[a.name]
-    check_model(dev, a.force_model)
-    old = read_config(dev)
-    cfg = bytearray(old)
-    # Bytes the app writes on every lighting change (FUN_0048d680)
-    cfg[0x09] = 1 if fw == SELF_DEFINE[1] else 0
-    cfg[0x0A] = fw
-    cfg[0x0B] = 0x20                   # StartGp 0x20 + color group 0
-    cfg[0x38] = cfg[0x39] = 0xFF
-    bri, sc = cfg[0x38 + 2 * pos], cfg[0x39 + 2 * pos]
-    speed, slot = sc >> 4, sc & 0x0F
-    if a.brightness is not None:
-        bri = a.brightness
-    if a.speed is not None:
-        if not has_speed:
-            print(f"note: {name} has no speed setting")
-        speed = a.speed
-    if a.color is not None:
-        if not has_color:
-            raise Fail(f"{name} has no color setting")
-        c = a.color.lower()
-        if c == "multi":
-            slot = MULTI_SLOT
-        elif re.fullmatch(r"[0-6]", c):
-            slot = int(c)
-        else:
-            rgb = parse_color(a.color, theme_colors(a.theme))
-            tab_old = dev.read("color table", CMD_COLORTAB, COLORTAB_BYTES, placeholder=placeholder_colortab())
-            check_mark(tab_old, 0x1FA, "the color table")
-            tab = bytearray(tab_old)
-            row = pos * 21                 # row n belongs to LedOpt position n; slot 0 = bytes R G B
-            tab[row:row + 3] = bytes(rgb)
-            save_backup("colortab", tab_old, dev.live)
-            dev.write("color table", CMD_COLORTAB, tab)
-            slot = 0
-    cfg[0x38 + 2 * pos] = bri
-    cfg[0x39 + 2 * pos] = (speed << 4) | slot
-    write_config(dev, cfg, old)
-
-
-def cmd_fn(a, dev):
-    layer_no = LAYERS[a.layer]
-    changes = []
-    if a.reset and layer_no != LAYERS["fn1"]:
-        raise Fail("--reset knows the factory Fn layer (fn1) only")
-    for item in a.items:
-        if a.reset:
-            slot = slot_of(item, a.layout)
-            raw = FN_DEFAULTS.get(SLOT_NAME[slot], 0)
-            entry = (raw >> 24, (raw >> 16) & 0xFF, (raw >> 8) & 0xFF, raw & 0xFF)
-        else:
-            if "=" not in item:
-                raise Fail(f"'{item}': write key=action, e.g. f1=play")
-            key, action = item.split("=", 1)
-            slot, entry = slot_of(key, a.layout), parse_action(action, a.action_layout or a.layout)
-        if slot == FN_SLOT:
-            raise Fail("the Fn key itself stays as it is (otherwise Fn could be gone)")
-        if slot == SLOTS["knob"] and not a.allow_knob:
-            raise Fail("the knob press is left alone unless --allow-knob is given")
-        changes.append((item, slot, entry))
-    if not changes and not a.show:
-        raise Fail("nothing to do: fn <key>=<action> ..., fn --show or fn --reset <key> ...")
-    check_model(dev, a.force_model)
-    layer_old = read_layer(dev, layer_no)
-    if a.show:
-        show_layer(layer_old, a.layer, a.layout)
-        return
-    cfg = read_config(dev)              # checked before anything is written
-    layer = bytearray(layer_old)
-    if layer_no == LAYERS["base"]:
-        print("note: this changes the BASE layer (what the keys do without Fn)")
-    for item, slot, entry in changes:
-        layer[slot * 4:slot * 4 + 4] = bytes(entry)
-        print(f"  {item}: {bytes(entry).hex(' ')} ({describe_entry(entry, a.action_layout or a.layout)})")
-    fn = slice(FN_SLOT * 4, FN_SLOT * 4 + 4)
-    if layer[fn] != layer_old[fn] or bytes(layer[-4:]) != LAYER_END:
-        raise Fail("internal error: the Fn key or the layer end mark would change; nothing written")
-    save_backup(f"layer-{a.layer}", layer_old, dev.live)
-    dev.write(f"key layer {a.layer}", CMD_KEYS, layer, index=layer_no)
-    # The app writes the lighting config after the layers; on the L65 that commits them
-    write_config(dev, bytearray(cfg), cfg)
-
-
-def perkey_block(colors, start=None):
-    """{slot: rgb} -> what the app sends: R plane, G plane, B plane (126 bytes each), 6 spare bytes.
-    Keys not in colors keep their color from start."""
-    data = bytearray(start if start is not None else PERKEY_BYTES)
-    for slot, (r, g, b) in colors.items():
-        if slot < PLANE:
-            data[slot], data[PLANE + slot], data[2 * PLANE + slot] = r, g, b
-    return data
-
-
-def apply_perkey(a, dev, colors):
-    check_model(dev, a.force_model)
-    old = read_config(dev)              # checked before anything is written
-    old_keys = dev.read("per-key colors", CMD_PERKEY, PERKEY_BYTES)
-    save_backup("perkey", old_keys, dev.live)
-    dev.write("per-key colors (self-define)", CMD_PERKEY, perkey_block(colors, old_keys), index=0)
-    if getattr(a, "keep_effect", False) and old[0x0A] != SELF_DEFINE[1]:
-        # The colors wait on the keyboard until Self-define is picked; the effect stays
-        print("the keyboard keeps its effect; the colors show once self-define is picked")
-        return
-    cfg = bytearray(old)
-    pos = SELF_DEFINE[0]
-    cfg[0x09], cfg[0x0A], cfg[0x0B] = 1, SELF_DEFINE[1], 0x20
-    if a.brightness is not None:
-        cfg[0x38 + 2 * pos] = a.brightness
-    elif cfg[0x38 + 2 * pos] == 0:
-        cfg[0x38 + 2 * pos] = 4
-    write_config(dev, cfg, old)
-
-
-def cmd_colors(a, dev):
+def cmd_colors(a, drv):
+    need(drv.board, "per-key colors", "perkey")
     theme = theme_colors(a.theme)
     colors = {}
     if a.all:
         rgb = parse_color(a.all, theme)
-        colors = {s: rgb for s in SLOTS.values()}
+        colors = {s: rgb for s in drv.slots.values()}
     for item in a.items:
         if "=" not in item:
             raise Fail(f"'{item}': write key=color, e.g. w=red")
         key, color = item.split("=", 1)
-        colors[slot_of(key, a.layout)] = parse_color(color, theme)
+        colors[drv.slot_of(key, a.layout)] = parse_color(color, theme)
     if not colors:
         raise Fail("no keys given (colors w=red a=red ... or --all <color>)")
-    apply_perkey(a, dev, colors)
+    drv.perkey(a, colors)
 
 
-def cmd_style(a, dev):
+def cmd_style(a, drv):
+    need(drv.board, "per-key colors", "perkey")
     theme = theme_colors(a.theme)
     role = lambda r, fallback: parse_color(theme.get(r, fallback), {})
     primary, secondary, accent = role("primary", "#5d6fe8"), role("secondary", "#93a4f7"), role("accent", "#a48cf2")
     colors = {}
     if a.name == "solid":
-        colors = {s: primary for s in SLOTS.values()}
+        colors = {s: primary for s in drv.slots.values()}
     elif a.name == "split":
         mods = {"tab", "caps_lock", "shift_l", "control_l", "super_l", "alt_l", "fn", "control_r",
-                "shift_r", "return", "backspace", "delete", "prior", "next", "end", "knob", "grave"}
-        for name, slot in SLOTS.items():
+                "shift_r", "return", "backspace", "delete", "prior", "next", "end", "knob", "grave",
+                "home", "insert", "alt_r", "super_r", "menu", "print", "scroll_lock", "pause", "hangul"}
+        for name, slot in drv.slots.items():
             if name in ("esc", "up", "down", "left", "right"):
                 colors[slot] = accent
-            elif name in mods or name.startswith("f") and name[1:].isdigit():
+            elif name in mods or name.startswith("kp_") or name.startswith("f") and name[1:].isdigit():
                 colors[slot] = secondary
             else:
                 colors[slot] = primary
     else:  # rows: accent at the edges, primary in the middle
-        for row, rgb in zip(ROWS, [accent, secondary, primary, primary, secondary, accent]):
+        rows = layout_rows(drv.board)
+        for i, row in enumerate(rows):
+            edge = min(i, len(rows) - 1 - i)
+            rgb = accent if edge == 0 else secondary if edge == 1 else primary
             for name in row:
-                colors[SLOTS[name]] = rgb
-    apply_perkey(a, dev, colors)
+                colors[drv.slots[name]] = rgb
+    drv.perkey(a, colors)
 
 
-def frame_block(colors, base):
-    data = bytearray(FRAME_BYTES)
-    for slot in range(126):
-        data[slot * 3:slot * 3 + 3] = bytes(colors.get(slot, base))
-    return data
-
-
-def send_stop(dev):
-    dev.write("live frame: stop", CMD_FRAME, b"\x00\x00\x00", index=2)
-
-
-def highlight_keys(items, lit, base, theme, layout, skip_unknown):
+def highlight_keys(drv, items, lit, base, theme, layout, skip_unknown):
     """Slot colors for `key` (in lit) and `key=color`; `color=C` and `base=C` set those two."""
     colors = {}
     for item in items:
@@ -844,7 +283,7 @@ def highlight_keys(items, lit, base, theme, layout, skip_unknown):
             base = parse_color(color, theme)
             continue
         try:
-            slot = slot_of(key, layout)
+            slot = drv.slot_of(key, layout)
         except Fail:
             # with --skip-unknown, names that are no key on the board (mouse binds, print …)
             # are left out instead of failing
@@ -855,20 +294,19 @@ def highlight_keys(items, lit, base, theme, layout, skip_unknown):
     return colors, lit, base
 
 
-def cmd_highlight(a, dev):
+def cmd_highlight(a, drv):
+    need(drv.board, "live frames", "live")
     theme = theme_colors(a.theme)
     lit = parse_color(a.color or theme.get("primary", "white"), theme)
     base = parse_color(a.base or theme.get("bg", "off"), theme)
     if not a.keys and not a.stdin:
         raise Fail("highlight: name at least one key (or read them with --stdin)")
-    colors, lit, base = highlight_keys(a.keys, lit, base, theme, a.layout, a.skip_unknown)
-    check_model(dev, a.force_model)
-    block = frame_block(colors, base)
-    if not dev.live and not a.stdin:
-        dev.write("live frame", CMD_FRAME, block, index=0)
-        print("[dry-run] live, this frame goes out again every 0.5 s until the time is up or the "
-              "process gets SIGTERM/SIGINT, then the stop packet:")
-        send_stop(dev)
+    colors, lit, base = highlight_keys(drv, a.keys, lit, base, theme, a.layout, a.skip_unknown)
+    if not drv.live and not a.stdin:
+        drv.frame(colors, base)
+        print(f"[dry-run] live, this frame goes out again every {drv.frame_interval:g} s until the time is up "
+              "or the process gets SIGTERM/SIGINT, then the stop packet:")
+        drv.frame_stop()
         return
     stop = []
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -886,9 +324,8 @@ def cmd_highlight(a, dev):
 
     try:
         while not over():
-            # The board drops back to its effect about a second after the last frame
-            dev.write("live frame", CMD_FRAME, block, index=0, delay=0.007)
-            resend = time.monotonic() + 0.5
+            drv.frame(colors, base)
+            resend = time.monotonic() + drv.frame_interval
             while not over() and time.monotonic() < resend:
                 if not a.stdin:
                     time.sleep(0.05)
@@ -908,19 +345,42 @@ def cmd_highlight(a, dev):
                 # Only the newest list matters when several came at once
                 line = lines[-1].decode("utf-8", "replace")
                 try:
-                    colors, lit, base = highlight_keys(line.split(), lit, base, theme, a.layout, a.skip_unknown)
+                    colors, lit, base = highlight_keys(drv, line.split(), lit, base, theme, a.layout, a.skip_unknown)
                 except Fail as e:
                     print(f"frame-keyboard: {e}", file=sys.stderr, flush=True)
                     continue
-                block = frame_block(colors, base)
                 break  # the new frame goes out right away
     finally:
-        send_stop(dev)
+        drv.frame_stop()
 
 
-def cmd_stop(a, dev):
-    check_model(dev, a.force_model)
-    send_stop(dev)
+def cmd_info(a, drv):
+    return drv.info(a)
+
+
+def cmd_backup(a, drv):
+    drv.backup_all(a)
+
+
+def cmd_restore(a, drv):
+    drv.restore(a)
+
+
+def cmd_effect(a, drv):
+    need(drv.board, "built-in effects", "effects")
+    drv.effect(a, theme_colors(a.theme), parse_color)
+
+
+def cmd_fn(a, drv):
+    need(drv.board, "Fn layer", "fn")
+    if a.layer not in drv.board.can.get("layers", []):
+        raise Fail(f"the {drv.board.name} has no layer {a.layer} (layers: {', '.join(drv.board.can.get('layers', []))})")
+    drv.fn(a)
+
+
+def cmd_stop(a, drv):
+    need(drv.board, "live frames", "live")
+    drv.frame_stop()
 
 
 # ---------------------------------------------------------------- main
@@ -929,32 +389,37 @@ def main():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--live", action="store_true", help="really talk to the keyboard (default: dry run)")
     common.add_argument("--dry-run", action="store_true", help="only print the packets (the default)")
+    common.add_argument("--board", help="board id from the registry (default: plugged in or saved)")
     common.add_argument("--hidraw", help="use this /dev/hidrawN")
     common.add_argument("--verbose", "-v", action="store_true", help="print the packets in live mode too")
     common.add_argument("--force-model", action="store_true", help=argparse.SUPPRESS)
     common.add_argument("--layout", choices=["us", "de"],
                         default=os.environ.get("FRAME_KEYBOARD_LAYOUT", "us").lower()[:2],
                         help="read key names as US or German (QWERTZ) layout")
-    common.add_argument("--theme", help="frameshell theme for color roles (default: the active one)")
-    common.add_argument("--json", action="store_true", help="list, keys, effects, actions, info: JSON on stdout")
+    common.add_argument("--theme", help="facet theme for color roles (default: the active one)")
+    common.add_argument("--json", action="store_true", help="JSON on stdout (boards, board, detect, list, keys, effects, actions, info)")
 
     p = argparse.ArgumentParser(prog="frame-keyboard", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("list", "keys", "effects", "actions", "backup", "stop"):
+    for name in ("list", "detect", "udev", "keys", "effects", "actions", "backup", "stop"):
         sub.add_parser(name, parents=[common])
+    s = sub.add_parser("boards", parents=[common])
+    s.add_argument("text", nargs="*", help="only boards whose vendor, name or id contain these words")
+    s = sub.add_parser("board", parents=[common])
+    s.add_argument("id", nargs="?", help="save this board as yours")
     s = sub.add_parser("info", parents=[common])
-    s.add_argument("--layer", choices=LAYERS, default="fn1")
+    s.add_argument("--layer", choices=["base", "fn1", "fn2", "tap"], default="fn1")
     s = sub.add_parser("restore", parents=[common])
     s.add_argument("file")
     s = sub.add_parser("effect", parents=[common])
     s.add_argument("name")
-    s.add_argument("-b", "--brightness", type=int, choices=range(10))
-    s.add_argument("-s", "--speed", type=int, choices=range(5))
+    s.add_argument("-b", "--brightness", type=int)
+    s.add_argument("-s", "--speed", type=int)
     s.add_argument("-c", "--color", help="slot 0-6, multi, or a color")
     s = sub.add_parser("fn", parents=[common])
     s.add_argument("items", nargs="*")
-    s.add_argument("--layer", choices=LAYERS, default="fn1")
+    s.add_argument("--layer", choices=["base", "fn1", "fn2", "tap"], default="fn1")
     s.add_argument("--show", action="store_true")
     s.add_argument("--reset", action="store_true", help="put the named keys back to the factory Fn action")
     s.add_argument("--allow-knob", action="store_true")
@@ -969,7 +434,7 @@ def main():
             s.add_argument("name", choices=["solid", "split", "rows"])
             s.add_argument("--keep-effect", action="store_true",
                            help="only store the colors unless self-define is the effect already")
-        s.add_argument("-b", "--brightness", type=int, choices=range(10))
+        s.add_argument("-b", "--brightness", type=int)
     s = sub.add_parser("highlight", parents=[common])
     s.add_argument("keys", nargs="*", help="key or key=color")
     s.add_argument("--stdin", action="store_true",
@@ -988,16 +453,25 @@ def main():
     out = sys.stdout
     try:
         with contextlib.redirect_stdout(sys.stderr if a.json else sys.stdout):
-            if a.cmd in ("list", "keys", "effects", "actions"):
-                result = {"list": cmd_list, "keys": cmd_keys, "effects": cmd_effects,
-                          "actions": cmd_actions}[a.cmd](a)
+            boards = kblib.load_boards()
+            if a.cmd in ("boards", "board", "detect", "udev", "list"):
+                result = {"boards": cmd_boards, "board": cmd_board, "detect": cmd_detect,
+                          "udev": cmd_udev, "list": cmd_list}[a.cmd](a, boards)
+            elif a.cmd in ("keys", "effects", "actions"):
+                board = kblib.select_board(boards, a.board, quiet=True)
+                result = {"keys": cmd_keys, "effects": cmd_effects, "actions": cmd_actions}[a.cmd](a, board)
             else:
+                board = kblib.select_board(boards, a.board)
                 if not a.live:
-                    print("dry run: nothing is sent to the keyboard (add --live to send)", flush=True)
-                dev = Wired(a.live, a.hidraw, a.verbose)
+                    print(f"dry run: nothing is sent to the keyboard (add --live to send); board {board.name}",
+                          flush=True)
+                elif not board.tested:
+                    print(f"note: the {board.name} support is untested; stop at the first surprise "
+                          f"({board.data.get('notes', 'docs/boards')})", flush=True)
+                drv = family(board.family).Driver(board, boards, a.live, a.hidraw, a.verbose, a.force_model)
                 result = {"info": cmd_info, "backup": cmd_backup, "restore": cmd_restore,
                           "effect": cmd_effect, "fn": cmd_fn, "colors": cmd_colors, "style": cmd_style,
-                          "highlight": cmd_highlight, "stop": cmd_stop}[a.cmd](a, dev)
+                          "highlight": cmd_highlight, "stop": cmd_stop}[a.cmd](a, drv)
         if a.json:
             print(json.dumps(result), file=out)
         return 0

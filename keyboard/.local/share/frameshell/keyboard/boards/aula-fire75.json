@@ -1,0 +1,63 @@
+{
+  "id": "aula-fire75",
+  "name": "AULA FIRE-75",
+  "vendor": "AULA",
+  "aliases": [],
+  "family": "sinowealth-g5kb",
+  "tested": false,
+  "source": "AULA FIRE-75 driver.exe (aulastar.com), Dev/kb/FIRE75/KB.ini, Dev/kb/FIRE75USB/KB.ini",
+  "notes": "docs/boards/sinowealth-g5kb.md",
+  "usb": [{"vid": "258a", "pid": "010c", "link": "wired"}, {"vid": "3554", "pid": "fa09", "link": "dongle"}],
+  "can": {"effects": true, "brightness": 9, "speed": 4, "perkey": true, "live": true, "fn": true, "layers": ["base", "fn1", "fn2", "tap"]},
+  "protocol": {"ids": {"03 00 00 00 01 15": "AULA FIRE-75 Wireless", "03 00 00 00 01 e3": "AULA FIRE-75 Wired"}, "matrix_len": 128},
+  "effects": [
+    [1, 1, "static", false, true],
+    [2, 2, "breathing", true, true],
+    [3, 3, "rainbow", true, false],
+    [4, 4, "flash-away", true, true],
+    [5, 5, "raindrops", true, true],
+    [6, 6, "rainbow-wheel", true, true],
+    [7, 7, "ripples", true, true],
+    [8, 8, "stars", true, true],
+    [9, 9, "shadow", true, true],
+    [10, 10, "snake", true, true],
+    [11, 11, "neon-stream", true, true],
+    [12, 12, "reaction", true, true],
+    [13, 13, "sine-wave", true, true],
+    [14, 14, "scanning", true, true],
+    [15, 15, "windmill", true, false],
+    [16, 16, "waterfall", true, false],
+    [17, 17, "blossoming", true, false],
+    [18, 18, "storm", true, true],
+    [19, 21, "self-define", false, false],
+    [20, 0, "off", false, false]
+  ],
+  "keys": {
+    "esc": 0, "grave": 1, "tab": 2, "caps_lock": 3, "shift_l": 4, "control_l": 5, "1": 7, "q": 8,
+    "a": 9, "z": 10, "super_l": 11, "f1": 12, "2": 13, "w": 14, "s": 15, "x": 16,
+    "alt_l": 17, "f2": 18, "3": 19, "e": 20, "d": 21, "c": 22, "f3": 24, "4": 25,
+    "r": 26, "f": 27, "v": 28, "f4": 30, "5": 31, "t": 32, "g": 33, "b": 34,
+    "space": 35, "f5": 36, "6": 37, "y": 38, "h": 39, "n": 40, "f6": 42, "7": 43,
+    "u": 44, "j": 45, "m": 46, "f7": 48, "8": 49, "i": 50, "k": 51, "comma": 52,
+    "fn": 53, "f8": 54, "9": 55, "o": 56, "l": 57, "period": 58, "control_r": 59, "f9": 60,
+    "0": 61, "p": 62, "semicolon": 63, "slash": 64, "f10": 66, "minus": 67, "bracketleft": 68, "apostrophe": 69,
+    "shift_r": 70, "f11": 72, "equal": 73, "bracketright": 74, "left": 77, "f12": 78, "backspace": 79, "backslash": 80,
+    "return": 81, "up": 82, "down": 83, "knob": 84, "delete": 85, "prior": 86, "next": 87, "end": 88,
+    "right": 89
+  },
+  "layout": [
+    [["esc", 1.0], ["", 1.0], ["f1", 1.0], ["f2", 1.0], ["f3", 1.0], ["f4", 1.0], ["", 0.25], ["f5", 1.0], ["f6", 1.0], ["f7", 1.0], ["f8", 1.0], ["", 0.25], ["f9", 1.0], ["f10", 1.0], ["f11", 1.0], ["f12", 1.0], ["", 0.5], ["knob", 1]],
+    [["grave", 1.0], ["1", 1.0], ["2", 1.0], ["3", 1.0], ["4", 1.0], ["5", 1.0], ["6", 1.0], ["7", 1.0], ["8", 1.0], ["9", 1.0], ["0", 1.0], ["minus", 1.0], ["equal", 1.0], ["backspace", 2.0], ["delete", 1.0]],
+    [["tab", 1.5], ["q", 1.0], ["w", 1.0], ["e", 1.0], ["r", 1.0], ["t", 1.0], ["y", 1.0], ["u", 1.0], ["i", 1.0], ["o", 1.0], ["p", 1.0], ["bracketleft", 1.0], ["bracketright", 1.0], ["backslash", 1.5], ["prior", 1.0]],
+    [["caps_lock", 1.75], ["a", 1.0], ["s", 1.0], ["d", 1.0], ["f", 1.0], ["g", 1.0], ["h", 1.0], ["j", 1.0], ["k", 1.0], ["l", 1.0], ["semicolon", 1.0], ["apostrophe", 1.0], ["return", 2.25], ["next", 1.0]],
+    [["shift_l", 2.25], ["z", 1.0], ["x", 1.0], ["c", 1.0], ["v", 1.0], ["b", 1.0], ["n", 1.0], ["m", 1.0], ["comma", 1.0], ["period", 1.0], ["slash", 1.0], ["shift_r", 1.75], ["up", 1.0], ["end", 1.0]],
+    [["control_l", 1.25], ["super_l", 1.25], ["alt_l", 1.25], ["space", 6.25], ["fn", 1.25], ["control_r", 1.25], ["", 0.5], ["left", 1.0], ["down", 1.0], ["right", 1.0]]
+  ],
+  "fn_defaults": {
+    "esc": "0x07000004", "f1": "0x02000223", "f2": "0x0200018a", "f3": "0x0004002b", "f4": "0x00080008", "f5": "0x08030200", "f6": "0x08030100", "f7": "0x020000b6",
+    "f8": "0x020000cd", "f9": "0x020000b5", "f10": "0x020000e2", "f11": "0x020000ea", "f12": "0x020000e9", "knob": "0x0700001e", "grave": "0x07000008", "1": "0x07000005",
+    "2": "0x07000006", "3": "0x07000007", "delete": "0x00000049", "tab": "0x08020000", "q": "0x07000019", "w": "0x07000018", "e": "0x0700001a", "u": "0x00000046",
+    "i": "0x00000047", "o": "0x00000048", "backslash": "0x08000000", "g": "0x0700000a", "b": "0x07000011", "up": "0x08030100", "left": "0x08040200", "down": "0x08030200",
+    "right": "0x08040100", "super_l": "0x07000001"
+  }
+}

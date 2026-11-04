@@ -1,0 +1,60 @@
+{
+  "id": "aula-f65",
+  "name": "AULA F65",
+  "vendor": "AULA",
+  "aliases": [],
+  "family": "sinowealth-g5kb",
+  "tested": false,
+  "source": "AULA F65 driver.exe (aulastar.com), Dev/kb/KB.ini",
+  "notes": "docs/boards/sinowealth-g5kb.md",
+  "usb": [{"vid": "258a", "pid": "010c", "link": "wired"}, {"vid": "3554", "pid": "fa09", "link": "dongle"}],
+  "can": {"effects": true, "brightness": 4, "speed": 4, "perkey": true, "live": true, "fn": true, "layers": ["base", "fn1", "fn2", "tap"]},
+  "protocol": {"ids": {"03 00 00 00 01 aa": "AULA F65"}, "matrix_len": 128},
+  "effects": [
+    [1, 1, "static", false, true],
+    [2, 2, "breathing", true, true],
+    [3, 3, "rainbow", true, false],
+    [4, 4, "flash-away", true, true],
+    [5, 5, "raindrops", true, true],
+    [6, 6, "rainbow-wheel", true, true],
+    [7, 7, "ripples", true, true],
+    [8, 8, "stars", true, true],
+    [9, 9, "shadow", true, true],
+    [10, 10, "snake", true, true],
+    [11, 11, "neon-stream", true, true],
+    [12, 12, "reaction", true, true],
+    [13, 13, "sine-wave", true, true],
+    [14, 14, "scanning", true, true],
+    [15, 15, "windmill", true, false],
+    [16, 16, "waterfall", true, false],
+    [17, 17, "blossoming", true, false],
+    [18, 18, "storm", true, true],
+    [19, 21, "self-define", false, false],
+    [20, 0, "off", false, false]
+  ],
+  "keys": {
+    "esc": 1, "tab": 2, "caps_lock": 3, "shift_l": 4, "control_l": 5, "1": 7, "q": 8, "a": 9,
+    "z": 10, "super_l": 11, "2": 13, "w": 14, "s": 15, "x": 16, "alt_l": 17, "3": 19,
+    "e": 20, "d": 21, "c": 22, "4": 25, "r": 26, "f": 27, "v": 28, "5": 31,
+    "t": 32, "g": 33, "b": 34, "space": 35, "6": 37, "y": 38, "h": 39, "n": 40,
+    "7": 43, "u": 44, "j": 45, "m": 46, "8": 49, "i": 50, "k": 51, "comma": 52,
+    "9": 55, "o": 56, "l": 57, "period": 58, "fn": 59, "0": 61, "p": 62, "semicolon": 63,
+    "slash": 64, "menu": 65, "minus": 67, "bracketleft": 68, "apostrophe": 69, "equal": 73, "bracketright": 74, "backspace": 79,
+    "backslash": 80, "return": 81, "shift_r": 82, "left": 83, "up": 88, "down": 89, "delete": 91, "prior": 92,
+    "next": 93, "end": 94, "right": 95
+  },
+  "layout": [
+    [["esc", 1.0], ["1", 1.0], ["2", 1.0], ["3", 1.0], ["4", 1.0], ["5", 1.0], ["6", 1.0], ["7", 1.0], ["8", 1.0], ["9", 1.0], ["0", 1.0], ["minus", 1.0], ["equal", 1.0], ["backspace", 2.0], ["delete", 1.0]],
+    [["tab", 1.5], ["q", 1.0], ["w", 1.0], ["e", 1.0], ["r", 1.0], ["t", 1.0], ["y", 1.0], ["u", 1.0], ["i", 1.0], ["o", 1.0], ["p", 1.0], ["bracketleft", 1.0], ["bracketright", 1.0], ["backslash", 1.5], ["prior", 1.0]],
+    [["caps_lock", 1.75], ["a", 1.0], ["s", 1.0], ["d", 1.0], ["f", 1.0], ["g", 1.0], ["h", 1.0], ["j", 1.0], ["k", 1.0], ["l", 1.0], ["semicolon", 1.0], ["apostrophe", 1.0], ["return", 2.25], ["next", 1.0]],
+    [["shift_l", 2.25], ["z", 1.0], ["x", 1.0], ["c", 1.0], ["v", 1.0], ["b", 1.0], ["n", 1.0], ["m", 1.0], ["comma", 1.0], ["period", 1.0], ["slash", 1.0], ["shift_r", 1.75], ["up", 1.0], ["end", 1.0]],
+    [["control_l", 1.25], ["super_l", 1.25], ["alt_l", 1.25], ["space", 6.5], ["fn", 1.25], ["menu", 1.25], ["", 0.5], ["left", 1.0], ["down", 1.0], ["right", 1.0]]
+  ],
+  "fn_defaults": {
+    "esc": "0x07000004", "1": "0x0000003a", "2": "0x0000003b", "3": "0x0000003c", "4": "0x0000003d", "5": "0x0000003e", "6": "0x0000003f", "7": "0x00000040",
+    "8": "0x00000041", "9": "0x00000042", "0": "0x00000043", "minus": "0x00000044", "equal": "0x00000045", "tab": "0x08020000", "q": "0x07000008", "w": "0x07000000",
+    "e": "0x07000005", "r": "0x07000006", "t": "0x07000007", "u": "0x00000046", "i": "0x00000047", "o": "0x00000048", "backslash": "0x08000000", "g": "0x0700000a",
+    "b": "0x07000011", "comma": "0x08040001", "period": "0x08030001", "slash": "0x08020001", "shift_r": "0x08000001", "up": "0x08030100", "left": "0x08040200", "down": "0x08030200",
+    "right": "0x08040100", "control_l": "0x07000013", "super_l": "0x07000001", "next": "0x00020035", "delete": "0x00000049", "prior": "0x00000035", "end": "0x0000004a"
+  }
+}
