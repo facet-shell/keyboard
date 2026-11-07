@@ -535,7 +535,7 @@ class Driver:
         self.write("live frame", CMD_FRAME, data, index=0, delay=0.007)
 
     def frame_stop(self):
-        self.write("live facet: stop", CMD_FRAME, b"\x00\x00\x00", index=2)
+        self.write("live frame: stop", CMD_FRAME, b"\x00\x00\x00", index=2)
 
 
 def config_nodes(board):

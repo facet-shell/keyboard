@@ -235,13 +235,13 @@ class Driver:
         for n, (name, i) in enumerate(sorted(self.slots.items(), key=lambda kv: kv[1])[:128]):
             data[n * 4] = i
             data[n * 4 + 1:n * 4 + 4] = bytes(colors.get(i, base))
-        self.send("live facet: header", self.header(CMD_LIVE, LIVE_BYTES // 64))
+        self.send("live frame: header", self.header(CMD_LIVE, LIVE_BYTES // 64))
         self.bulk("live frame", data, ack=False)
-        self.send("live facet: end", self.header(CMD_END))
+        self.send("live frame: end", self.header(CMD_END))
 
     def frame_stop(self):
         # guess: 04 F0 starts the saved effect again
-        self.send("live facet: stop (apply the saved effect)", self.header(CMD_APPLY))
+        self.send("live frame: stop (apply the saved effect)", self.header(CMD_APPLY))
 
 
 def config_nodes(board):
