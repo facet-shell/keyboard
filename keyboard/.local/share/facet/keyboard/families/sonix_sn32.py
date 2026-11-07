@@ -44,10 +44,10 @@ class Driver:
         nodes = config_nodes(board)
         if node:
             if Path(node).resolve().as_posix() not in [n for n, *_ in nodes]:
-                raise Fail(f"{node} is not the configuration interface of a {board.name} (frame-keyboard list)")
+                raise Fail(f"{node} is not the configuration interface of a {board.name} (facet-keyboard list)")
         else:
             if not nodes:
-                raise Fail(f"no {board.name} with its configuration interface found (frame-keyboard list); "
+                raise Fail(f"no {board.name} with its configuration interface found (facet-keyboard list); "
                            "over the 2.4 GHz dongle this version sends nothing, plug the cable in")
             if len(nodes) > 1:
                 raise Fail("more than one candidate: " + ", ".join(n for n, *_ in nodes) + " (pick one with --hidraw)")
@@ -151,7 +151,7 @@ class Driver:
     def slot_of(self, name, layout):
         key = key_id(name, layout)
         if key not in self.slots:
-            raise Fail(f"unknown key '{name}' on the {self.board.name} (frame-keyboard keys)")
+            raise Fail(f"unknown key '{name}' on the {self.board.name} (facet-keyboard keys)")
         return self.slots[key]
 
     # ------------------------------------------------------------ for front ends
@@ -160,7 +160,7 @@ class Driver:
         return [{"name": n, "speed": s, "color": c, "direction": d} for _, n, s, c, d in self.effects]
 
     def actions_json(self):
-        raise Fail(f"the {self.board.name} has no Fn layer in frame-keyboard (yet)")
+        raise Fail(f"the {self.board.name} has no Fn layer in facet-keyboard (yet)")
 
     # ------------------------------------------------------------ commands
 
@@ -182,7 +182,7 @@ class Driver:
     def restore(self, a):
         path = Path(a.file)
         if not path.name.endswith("-perkey.bin"):
-            raise Fail("restore takes a ...-perkey.bin from `frame-keyboard backup` on this board")
+            raise Fail("restore takes a ...-perkey.bin from `facet-keyboard backup` on this board")
         data = path.read_bytes()
         if len(data) < PERKEY_BYTES - 2:
             raise Fail("wrong size for per-key colors of this board")
@@ -193,7 +193,7 @@ class Driver:
 
     def effect(self, a, theme, parse_color):
         if a.name not in self.effect_by_name:
-            raise Fail(f"unknown effect '{a.name}' (frame-keyboard effects)")
+            raise Fail(f"unknown effect '{a.name}' (facet-keyboard effects)")
         value, name, has_speed, has_color, has_direction = self.effect_by_name[a.name]
         bri = self.brightness_max if a.brightness is None else a.brightness
         speed = 3 if a.speed is None else a.speed
@@ -235,13 +235,13 @@ class Driver:
         for n, (name, i) in enumerate(sorted(self.slots.items(), key=lambda kv: kv[1])[:128]):
             data[n * 4] = i
             data[n * 4 + 1:n * 4 + 4] = bytes(colors.get(i, base))
-        self.send("live frame: header", self.header(CMD_LIVE, LIVE_BYTES // 64))
+        self.send("live facet: header", self.header(CMD_LIVE, LIVE_BYTES // 64))
         self.bulk("live frame", data, ack=False)
-        self.send("live frame: end", self.header(CMD_END))
+        self.send("live facet: end", self.header(CMD_END))
 
     def frame_stop(self):
         # guess: 04 F0 starts the saved effect again
-        self.send("live frame: stop (apply the saved effect)", self.header(CMD_APPLY))
+        self.send("live facet: stop (apply the saved effect)", self.header(CMD_APPLY))
 
 
 def config_nodes(board):

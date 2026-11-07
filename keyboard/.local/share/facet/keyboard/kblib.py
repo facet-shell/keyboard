@@ -1,4 +1,4 @@
-"""Shared parts of frame-keyboard: the board registry, finding the keyboard, hidraw access,
+"""Shared parts of facet-keyboard: the board registry, finding the keyboard, hidraw access,
 key names, colors and the dry-run printout. The protocol of each board family lives in
 families/<family>.py, what each board has (ids, keys, effects, layout) in boards/<id>.json.
 """
@@ -11,14 +11,14 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parent
 BOARDS_DIR = Path(os.environ.get("FACET_KEYBOARD_BOARDS", DATA_DIR / "boards"))
-STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "frameshell"
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "facet"
 BACKUP_DIR = STATE_DIR / "keyboard"
 CHOICE_FILE = BACKUP_DIR / "board"
 # The theme palettes live with the facet command (the cli repo); its link in ~/.local/bin
 # leads there (the frame link is what older installs have)
 CLI_DIR = next((Path(os.path.realpath(Path.home() / ".local/bin" / n)).parent
                 for n in ("facet", "frame") if (Path.home() / ".local/bin" / n).exists()),
-               Path.home() / ".local/share/frameshell/cli")
+               Path.home() / ".local/share/facet/cli")
 # Used while nothing is picked and nothing is plugged in: the board facet started with
 DEFAULT_BOARD = "aula-f75"
 REQUEST_URL = "https://github.com/orgs/facet-shell/projects/1"
@@ -143,7 +143,7 @@ def select_board(boards, wanted=None, quiet=False):
     note = (lambda msg: None) if quiet else (lambda msg: print(f"note: {msg}"))
     if wanted:
         if wanted not in boards:
-            raise Fail(f"unknown board '{wanted}' (frame-keyboard boards)")
+            raise Fail(f"unknown board '{wanted}' (facet-keyboard boards)")
         return boards[wanted]
     saved = saved_board()
     if saved and saved not in boards:

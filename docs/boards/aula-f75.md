@@ -1,6 +1,6 @@
 # AULA F75 on Linux
 
-`frame-keyboard` sets the F75's lighting and Fn keys without the Windows app, and the shell
+`facet-keyboard` sets the F75's lighting and Fn keys without the Windows app, and the shell
 has an app for it (Super+K); `facet add keyboard` sets both up. The protocol below has
 to prove itself on the real board first.
 Everything here was worked out from the vendor software and other people's notes.
@@ -28,9 +28,9 @@ Marks used below:
 facet add keyboard          # then pick "aula-f75" in the list
 ```
 
-That links `frame-keyboard` into `~/.local/bin`, writes the udev rules for every board in the
+That links `facet-keyboard` into `~/.local/bin`, writes the udev rules for every board in the
 registry (`/etc/udev/rules.d/70-facet-keyboards.rules`, asks for sudo; the old
-`70-frameshell-aula-f75.rules` goes) and asks which keyboard you have. Unplug and replug the
+`70-facet-aula-f75.rules` goes) and asks which keyboard you have. Unplug and replug the
 keyboard once afterwards. `facet install` without names takes the package along by itself
 when a supported board is plugged in, `facet keyboard set aula-f75` changes the pick, and
 `facet update` puts changed rules in place again.
@@ -42,15 +42,15 @@ id belongs to (it says so), so a wrong pick cannot send F75 data to an F99.
 Test in this order and stop at the first surprise. Steps 1–3 only read, step 4 only touches
 RAM, and from step 5 on the changes go to flash. Each of those writes saves the old block first.
 
-1. `frame-keyboard list`: reads sysfs only. One line should end in `<- configuration interface`.
-2. `frame-keyboard info --live`: the device id must be `03 00 00 00 00 cd`, and the config must
+1. `facet-keyboard list`: reads sysfs only. One line should end in `<- configuration interface`.
+2. `facet-keyboard info --live`: the device id must be `03 00 00 00 00 cd`, and the config must
    end in `5a a5`. The Fn layer should match the factory list further down.
-3. `frame-keyboard backup --live`: saves every block to `~/.local/state/frameshell/keyboard/`.
-4. `frame-keyboard highlight --live q w e --seconds 3`: a live frame, nothing is saved. The old
-   effect should come back afterwards; if not, run `frame-keyboard stop --live` or replug.
-5. `frame-keyboard effect breathing -b 2 -s 2 --live`, then compare `info --live` with what you see.
-6. `frame-keyboard fn f12=volup --live` (what that key does already), then something new.
-7. `frame-keyboard colors --all off w=red a=red s=red d=red --live`, then `style split --live`.
+3. `facet-keyboard backup --live`: saves every block to `~/.local/state/facet/keyboard/`.
+4. `facet-keyboard highlight --live q w e --seconds 3`: a live frame, nothing is saved. The old
+   effect should come back afterwards; if not, run `facet-keyboard stop --live` or replug.
+5. `facet-keyboard effect breathing -b 2 -s 2 --live`, then compare `info --live` with what you see.
+6. `facet-keyboard fn f12=volup --live` (what that key does already), then something new.
+7. `facet-keyboard colors --all off w=red a=red s=red d=red --live`, then `style split --live`.
 
 Without `--live`, every command prints the packets it would send and stops there.
 
@@ -69,7 +69,7 @@ map with QWERTZ labels and has three tabs:
   them. *fill all* paints every key, and *solid*, *split* and *rows* are the theme styles.
   *write colors* saves them on the keyboard as the Self-define effect.
 
-The app calls `frame-keyboard` in `~/.local/bin` (`facet add keyboard`). It starts as
+The app calls `facet-keyboard` in `~/.local/bin` (`facet add keyboard`). It starts as
 a **dry run**: it shows placeholder data, and the log at the bottom shows the packets it would
 have sent. The *dry run* button switches to live until the shell restarts. Once the test
 order above works, set `keyboardLive: true` in `quickshell/.config/quickshell/config/Config.qml` (core)
@@ -82,9 +82,9 @@ Two things happen on their own once the app is live:
   modifier more dimmed, the held modifiers in primary, the rest in the theme's background.
   Super with anything counts, and two other modifiers together (Ctrl+Alt, Ctrl+Shift); a lone
   Shift or Ctrl is typing. Hyprland reports the modifiers a moment after they settle
-  (`hypr/frame/hotkeys.lua`, `qs ipc call keyboard mods super+shift`), so Ctrl+C and Super+Space
+  (`hypr/facet/hotkeys.lua`, `qs ipc call keyboard mods super+shift`), so Ctrl+C and Super+Space
   light nothing. The binds are read fresh each time, so the keys follow the mode (the canvas
-  swaps binds while the overview is open). One `frame-keyboard highlight --stdin` runs for the
+  swaps binds while the overview is open). One `facet-keyboard highlight --stdin` runs for the
   whole time something is held and takes the new key list on stdin, so Super → Super+Shift
   changes the frame without the board falling back to its effect in between. The hotkey overlay
   (Super held for 1.5 s, or opened by hand) counts as Super held. Nothing is saved on the board;
@@ -114,7 +114,7 @@ The app's internal name is `BYCOMBO4`.
 
 The app opens the HID collection with usage page `0xFF00`, usage `1` and a 520-byte (`0x208`)
 feature report: interface 1 of the keyboard (**app**, **OpenRGB**). On Linux that is one of the
-`hidraw` nodes of 258a:010c. `frame-keyboard list` finds it by usage page 0xFF00 and report ID 6
+`hidraw` nodes of 258a:010c. `facet-keyboard list` finds it by usage page 0xFF00 and report ID 6
 in the report descriptor (**guess**: the exact descriptor bytes are untested).
 
 Before it uses a board, the app reads the board's id with command `0x82` and compares it with
@@ -127,7 +127,7 @@ Before it uses a board, the app reads the board's id with command `0x82` and com
 | `F75KR` | `03 00 00 00 01 91` | AULA F75 KR |
 
 OpenRGB reads the model byte at offset 13 of the reply and knows `0xCD` as the AULA F75
-(**OpenRGB**). `frame-keyboard` writes nothing unless the id belongs to a board in the registry.
+(**OpenRGB**). `facet-keyboard` writes nothing unless the id belongs to a board in the registry.
 
 ## Packet (report 6, 520 bytes)
 
@@ -249,7 +249,7 @@ A modifier on its own is a keyboard entry with key1 = E0–E7. The app's VK→HI
 
 **Slots** are `column × 6 + row`, the last field of each `K<n>` line in KB.ini: Esc 0, ` 1,
 Tab 2, Caps 3, LShift 4, LCtrl 5, 1 7, Q 8 … Fn 53, knob press 84, Right 89. The full list is
-`SLOTS` in `frame-keyboard`. OpenRGB's F75 LED map uses the same numbers (**OpenRGB**). The ini
+`SLOTS` in `facet-keyboard`. OpenRGB's F75 LED map uses the same numbers (**OpenRGB**). The ini
 has no right Alt and no ISO keys (`<>` and `#`), so their slots are unknown.
 
 ### Factory Fn layer of the F75 (KB.ini `[FN1]`)
@@ -273,7 +273,7 @@ has no right Alt and no ISO keys (`<>` and `#`), so their slots are unknown.
 | \ / LShift | `08 00 00 00` / `08 00 00 01` | lighting (on/off? **guess**) |
 | knob press | `07 00 00 1d` | keyboard function 0x1D |
 
-`frame-keyboard fn --reset <key>` puts these back. The tool never changes the Fn key itself,
+`facet-keyboard fn --reset <key>` puts these back. The tool never changes the Fn key itself,
 and it leaves the knob alone unless `--allow-knob` is given.
 
 ## Per-key colors (cmd 06, "Self-define")
@@ -289,7 +289,7 @@ A frame is 378 bytes, 126 × R, G, B interleaved, INDEX 0, sent 7 ms after the p
 The app's music code (0x0047f1c0) sends size 0x17A, and **OpenRGB** sends the same header,
 `06 08 00 00 01 00 7a 01`. To stop, the app sends INDEX 2 with `00 00 00` (**app**; **L65 hw**).
 Frames stay in RAM. OpenRGB repeats the frame every second because otherwise the board falls
-back to its effect (**OpenRGB**). `frame-keyboard highlight` repeats it every 0.5 s and sends
+back to its effect (**OpenRGB**). `facet-keyboard highlight` repeats it every 0.5 s and sends
 the stop at the end. That fits the hotkey hints: `highlight --live --stdin` starts when a
 modifier goes down, every new combination is one line on its stdin, and the process ends when
 everything is up.

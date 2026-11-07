@@ -4,7 +4,7 @@
 The AULA F75 Max app (and its siblings from the same OEM) describe the keyboard in
 config.xml (USB ids) and layouts/<name>.xml: one <key> per key with its HID usage, the index
 in the key map (key_index), the index of its LED (light_index) and its rectangle in the picture.
-This prints a board file for frame-keyboard on stdout.
+This prints a board file for facet-keyboard on stdout.
 
   tools/ddxml2board.py --id aula-f75-max --vendor AULA --name "AULA F75 Max" \
       --source "AULA F75 Max ... Driver-1.0.0.5.exe (aulastar.com)" config.xml layouts/rgb-keyboard.xml
@@ -57,7 +57,7 @@ def main():
     for mode in cfg.iter("mode"):
         link = "wired" if mode.get("desc", "").upper().startswith("USB") else "dongle"
         entry = {"vid": mode.get("vid").lower(), "pid": mode.get("pid").lower(), "link": link}
-        # The dongle borrows an Apple id (05ac:024f); frame-keyboard never writes to it, so no
+        # The dongle borrows an Apple id (05ac:024f); facet-keyboard never writes to it, so no
         # udev rule for it (it would cover a real Apple keyboard as well)
         if link == "dongle" and entry["vid"] == "05ac":
             entry["udev"] = False

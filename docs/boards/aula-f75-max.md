@@ -5,7 +5,7 @@ a dongle at `05ac:024f`, and AULA ships another app for it. Board file `boards/a
 code `families/sonix_sn32.py`. **Untested, and worked out from the app alone: nothing here has
 been seen on the wire.** Every command is a dry run unless `--live` is given.
 
-What works in frame-keyboard: built-in effects (`effect`), per-key colors kept on the board
+What works in facet-keyboard: built-in effects (`effect`), per-key colors kept on the board
 (`colors`, `style`), live frames (`highlight`, the hotkey hints) and a backup of the per-key
 colors. Not there: the Fn layer (see below) and anything over the dongle.
 
@@ -26,7 +26,7 @@ The board file comes from the XML with `tools/ddxml2board.py`.
 The app opens every HID collection of the board and sorts them by report lengths
 (0x0044fa50): a 65-byte feature report is the configuration channel (wired), 33-byte input and
 output reports the dongle, usage page 0xFFFF/1 an input channel, a 0x1001-byte output report the
-screen. On Linux `frame-keyboard` takes the hidraw node of `0c45:800a` whose report descriptor has
+screen. On Linux `facet-keyboard` takes the hidraw node of `0c45:800a` whose report descriptor has
 a 64-byte feature report (`95 40` … `b1`): **guess**, the descriptor has not been seen.
 
 Every packet is a feature report without report ID: byte 0 is 0, then 64 data bytes
@@ -89,7 +89,7 @@ Modes from the app's default table (0x0042b380), names from string ids 521–540
 
 The flag column is the app's `config_func` (bit 1 speed, bit 4 color, bits 2/3 direction).
 Brightness and speed go to 5 (`brightness_max`/`speed_max` in the XML). The direction values
-are a **guess** (Keychron: 0 left→right, 1 right→left, 2 down→up, 3 up→down); `frame-keyboard`
+are a **guess** (Keychron: 0 left→right, 1 right→left, 2 down→up, 3 up→down); `facet-keyboard`
 always sends 0.
 
 ### Per-key colors

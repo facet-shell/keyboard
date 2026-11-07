@@ -21,7 +21,7 @@ Code: `families/sinowealth_g5kb.py`. **None of these boards has been tested with
 | Womier L65 | `03 00 00 00 01 ca` | 126 | 0–4 | 69 | yes | not known |
 
 All of them answer on `258a:010c`, so the USB id alone does not say which one is plugged in.
-`frame-keyboard` takes the board you picked (`facet keyboard set`), and with `--live` reads the
+`facet-keyboard` takes the board you picked (`facet keyboard set`), and with `--live` reads the
 device id (command `0x82`) before anything else. An id that belongs to another board file
 switches to that file, an id that belongs to none stops the command.
 

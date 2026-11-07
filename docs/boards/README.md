@@ -1,7 +1,7 @@
 # Boards
 
-`frame-keyboard` knows a keyboard through one file in
-`keyboard/.local/share/frameshell/keyboard/boards/<id>.json` and the code of its family in
+`facet-keyboard` knows a keyboard through one file in
+`keyboard/.local/share/facet/keyboard/boards/<id>.json` and the code of its family in
 `.../keyboard/families/<family>.py`. Boards of one family speak the same protocol; the file
 says what is different: ids, keys, effects, layout.
 
@@ -40,7 +40,7 @@ Key ids are xkb names in lower case, the way the hotkey overlay names keys (`q`,
 `"udev": false` gets no udev rule and does not count when looking for plugged-in boards (for ids
 a board borrows from another vendor, like the F75 Max dongle's Apple id).
 
-The `can` flags decide what `frame-keyboard` and the app offer: `effects` built-in effects,
+The `can` flags decide what `facet-keyboard` and the app offer: `effects` built-in effects,
 `perkey` colors kept on the board, `live` live frames (`highlight`, the hotkey hints), `fn` the
 Fn layer with the `layers` listed.
 
@@ -54,8 +54,8 @@ Fn layer with the `layers` listed.
 3. Otherwise it needs a new family: read the app (Ghidra for native code, the `.asar` for
    Electron), write the packets down in a `docs/boards/<board>.md` with where each one comes
    from, and keep everything a dry run until it was seen on the board.
-4. Check the file: `frame-keyboard keys --board <id>`, `frame-keyboard effect static --board <id>`
-   (prints the packets), `frame-keyboard board <id> --json`.
+4. Check the file: `facet-keyboard keys --board <id>`, `facet-keyboard effect static --board <id>`
+   (prints the packets), `facet-keyboard board <id> --json`.
 
 ## Asking for a board
 

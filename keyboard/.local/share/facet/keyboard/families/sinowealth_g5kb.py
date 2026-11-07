@@ -48,7 +48,7 @@ def raw_entry(text):
 
 
 class Driver:
-    """frame-keyboard's commands for one board of the family"""
+    """facet-keyboard's commands for one board of the family"""
 
     family = "sinowealth-g5kb"
 
@@ -64,14 +64,14 @@ class Driver:
         if node:
             # A node given by hand still has to be the configuration interface of such a board
             if Path(node).resolve().as_posix() not in [n for n, *_ in nodes]:
-                raise Fail(f"{node} is not the configuration interface of a {board.name} (frame-keyboard list)")
+                raise Fail(f"{node} is not the configuration interface of a {board.name} (facet-keyboard list)")
         else:
             if not nodes:
                 dongle = [(v, p) for v, p, link in board.usb if link == "dongle"]
                 if dongle and hidraw_nodes(set(dongle)):
                     raise Fail("only the 2.4 GHz dongle is there; this version talks to the keyboard "
                                "over the USB cable. Plug the cable in.")
-                raise Fail(f"no {board.name} with its configuration interface found (frame-keyboard list)")
+                raise Fail(f"no {board.name} with its configuration interface found (facet-keyboard list)")
             if len(nodes) > 1:
                 raise Fail("more than one candidate: " + ", ".join(n for n, *_ in nodes) + " (pick one with --hidraw)")
             node = nodes[0][0]
@@ -256,7 +256,7 @@ class Driver:
     def slot_of(self, name, layout):
         key = key_id(name, layout)
         if key not in self.slots:
-            raise Fail(f"unknown key '{name}' on the {self.board.name} (frame-keyboard keys)")
+            raise Fail(f"unknown key '{name}' on the {self.board.name} (facet-keyboard keys)")
         return self.slots[key]
 
     def hw_level(self, value, table, top, what):
@@ -365,7 +365,7 @@ class Driver:
         path = Path(a.file)
         m = re.search(r"-(config|colortab|perkey|layer-(base|fn1|fn2|tap))\.bin$", path.name)
         if not m:
-            raise Fail("restore takes a file from `frame-keyboard backup` (...-config.bin, ...-layer-fn1.bin ...)")
+            raise Fail("restore takes a file from `facet-keyboard backup` (...-config.bin, ...-layer-fn1.bin ...)")
         data = path.read_bytes()
         kind = m.group(1)
         # Check the file completely before anything goes to the keyboard
@@ -405,7 +405,7 @@ class Driver:
 
     def effect(self, a, theme, parse_color):
         if a.name not in self.effect_by_name:
-            raise Fail(f"unknown effect '{a.name}' (frame-keyboard effects)")
+            raise Fail(f"unknown effect '{a.name}' (facet-keyboard effects)")
         pos, fw, name, has_speed, has_color = self.effect_by_name[a.name]
         old = self.read_config()
         cfg = bytearray(old)
@@ -535,7 +535,7 @@ class Driver:
         self.write("live frame", CMD_FRAME, data, index=0, delay=0.007)
 
     def frame_stop(self):
-        self.write("live frame: stop", CMD_FRAME, b"\x00\x00\x00", index=2)
+        self.write("live facet: stop", CMD_FRAME, b"\x00\x00\x00", index=2)
 
 
 def config_nodes(board):

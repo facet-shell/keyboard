@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""frame-keyboard – lighting, Fn keys and per-key colors of keyboards from Linux, without the vendor app
+"""facet-keyboard – lighting, Fn keys and per-key colors of keyboards from Linux, without the vendor app
 
-Which keyboards: one file per board in ~/.local/share/frameshell/keyboard/boards (the registry),
+Which keyboards: one file per board in ~/.local/share/facet/keyboard/boards (the registry),
 the protocol of each board family in .../keyboard/families. The board is the one plugged in, or
-the one picked with `frame-keyboard board <id>` (facet keyboard set), or --board.
+the one picked with `facet-keyboard board <id>` (facet keyboard set), or --board.
 Protocol notes per board: docs/boards/ in the keyboard repo.
 
 NOTHING IS SENT UNLESS --live IS GIVEN. Without it every command only prints the packets it
 would send (dry run); reads are skipped and replaced by placeholder blocks. Before each write
 in live mode the current block is read back, checked and saved under
-${XDG_STATE_HOME:-~/.local/state}/frameshell/keyboard/, so `restore` can put it back.
+${XDG_STATE_HOME:-~/.local/state}/facet/keyboard/, so `restore` can put it back.
 
 Usage:
-  frame-keyboard boards [text] | board [<id>] | detect   the registry, the board in use, what is plugged in
-  frame-keyboard list                          keyboards and dongles found (sysfs only, sends nothing)
-  frame-keyboard keys | effects | actions      key names / built-in effects / what fn accepts
-  frame-keyboard info [--layer fn1]            device id, lighting config and a key layer
-  frame-keyboard backup                        save every block the board has
-  frame-keyboard restore <file>                write a saved block back
-  frame-keyboard effect <name> [-b N] [-s N] [-c slot|multi|color]
+  facet-keyboard boards [text] | board [<id>] | detect   the registry, the board in use, what is plugged in
+  facet-keyboard list                          keyboards and dongles found (sysfs only, sends nothing)
+  facet-keyboard keys | effects | actions      key names / built-in effects / what fn accepts
+  facet-keyboard info [--layer fn1]            device id, lighting config and a key layer
+  facet-keyboard backup                        save every block the board has
+  facet-keyboard restore <file>                write a saved block back
+  facet-keyboard effect <name> [-b N] [-s N] [-c slot|multi|color]
                                                switch the built-in effect (a color goes into the table)
-  frame-keyboard fn <key>=<action> ...         set Fn-layer keys (--layer fn1|fn2|base)
-  frame-keyboard fn --show | --reset <key>...  print the layer / put keys back to the factory Fn action
-  frame-keyboard colors [--all C] <key>=C ...  per-key colors, kept on the keyboard; keys not named keep theirs
-  frame-keyboard style solid|split|rows [--keep-effect]
+  facet-keyboard fn <key>=<action> ...         set Fn-layer keys (--layer fn1|fn2|base)
+  facet-keyboard fn --show | --reset <key>...  print the layer / put keys back to the factory Fn action
+  facet-keyboard colors [--all C] <key>=C ...  per-key colors, kept on the keyboard; keys not named keep theirs
+  facet-keyboard style solid|split|rows [--keep-effect]
                                                per-key style from the facet theme
-  frame-keyboard highlight <key[=C]...> [-c C] [--base C] [--hold | --seconds N | --stdin] [--skip-unknown]
+  facet-keyboard highlight <key[=C]...> [-c C] [--base C] [--hold | --seconds N | --stdin] [--skip-unknown]
                                                light keys live (RAM only, nothing saved), then stop
-  frame-keyboard stop                          end a live frame, back to the saved effect
-  frame-keyboard udev                          udev rules for every board in the registry
+  facet-keyboard stop                          end a live frame, back to the saved effect
+  facet-keyboard udev                          udev rules for every board in the registry
 
 Keys use the names of the hotkey overlay (xkb names, lower case): q, return, space, super_l,
 f5, prior ... `--layout de` reads them as QWERTZ (z, y, ssharp, udiaeresis ...).
@@ -54,11 +54,11 @@ def data_dir():
     there), or the linked copy in ~/.local/share"""
     env = os.environ.get("FACET_KEYBOARD_DATA")
     for d in ([Path(env)] if env else []) + [
-            Path(os.path.realpath(__file__)).parents[1] / "share/frameshell/keyboard",
-            Path.home() / ".local/share/frameshell/keyboard"]:
+            Path(os.path.realpath(__file__)).parents[1] / "share/facet/keyboard",
+            Path.home() / ".local/share/facet/keyboard"]:
         if (d / "kblib.py").is_file():
             return d
-    sys.exit("frame-keyboard: the board registry is missing (~/.local/share/frameshell/keyboard); "
+    sys.exit("facet-keyboard: the board registry is missing (~/.local/share/facet/keyboard); "
              "facet update keyboard")
 
 
@@ -90,7 +90,7 @@ def table_driver(board):
 
 def need(board, what, cap):
     if not board.can.get(cap):
-        raise Fail(f"the {board.name} has no {what} in frame-keyboard (yet)")
+        raise Fail(f"the {board.name} has no {what} in facet-keyboard (yet)")
 
 
 # ---------------------------------------------------------------- registry commands
@@ -118,7 +118,7 @@ def cmd_board(a, boards):
         if a.id not in boards:
             close = [b.id for b in boards.values() if b.matches(a.id)]
             raise Fail(f"unknown board '{a.id}'" + (f"; did you mean {', '.join(close)}?" if close else
-                                                    " (frame-keyboard boards)"))
+                                                    " (facet-keyboard boards)"))
         kblib.save_board(a.id)
         if not a.json:
             print(f"board: {boards[a.id].name} ({a.id}), saved in {kblib.CHOICE_FILE}")
@@ -147,9 +147,9 @@ def cmd_detect(a, boards):
 
 
 def cmd_udev(a, boards):
-    print("# facet keyboards: hidraw access for frame-keyboard without root, for whoever sits at the seat.")
+    print("# facet keyboards: hidraw access for facet-keyboard without root, for whoever sits at the seat.")
     print("# Written by `facet add keyboard` / `facet update keyboard` from the board registry")
-    print("# (frame-keyboard udev); udev does not follow links into $HOME, so it is a copy.")
+    print("# (facet-keyboard udev); udev does not follow links into $HOME, so it is a copy.")
     seen = set()
     for b in sorted(boards.values(), key=lambda b: b.id):
         for v, p, link in b.udev:
@@ -175,7 +175,7 @@ def cmd_list(a, boards):
     if a.json:
         return out
     if not out:
-        print("no keyboard or dongle from the registry found (frame-keyboard boards)")
+        print("no keyboard or dongle from the registry found (facet-keyboard boards)")
     for n in out:
         kind = "keyboard on the USB cable" if n["kind"] == "wired" else "2.4 GHz dongle"
         role = "  <- configuration interface" if n["config"] else ""
@@ -347,7 +347,7 @@ def cmd_highlight(a, drv):
                 try:
                     colors, lit, base = highlight_keys(drv, line.split(), lit, base, theme, a.layout, a.skip_unknown)
                 except Fail as e:
-                    print(f"frame-keyboard: {e}", file=sys.stderr, flush=True)
+                    print(f"facet-keyboard: {e}", file=sys.stderr, flush=True)
                     continue
                 break  # the new frame goes out right away
     finally:
@@ -399,7 +399,7 @@ def main():
     common.add_argument("--theme", help="facet theme for color roles (default: the active one)")
     common.add_argument("--json", action="store_true", help="JSON on stdout (boards, board, detect, list, keys, effects, actions, info)")
 
-    p = argparse.ArgumentParser(prog="frame-keyboard", description=__doc__,
+    p = argparse.ArgumentParser(prog="facet-keyboard", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("list", "detect", "udev", "keys", "effects", "actions", "backup", "stop"):
@@ -476,7 +476,7 @@ def main():
             print(json.dumps(result), file=out)
         return 0
     except (Fail, OSError) as e:
-        print(f"frame-keyboard: {e}", file=sys.stderr)
+        print(f"facet-keyboard: {e}", file=sys.stderr)
         return 1
 
 

@@ -5,7 +5,7 @@ The AULA, Womier, LEOBOG ... apps built on OemDrv.exe describe each keyboard in
 Dev/kb/<name>/KB.ini: USB ids, the device id the board answers ("Psd"), the matrix size, the
 effect list (LedOpt), the key rectangles of the picture with their matrix slot, and the factory
 Fn layer. This reads one or more of them (variants of the same board: wired, KR, ...) and
-prints a board file for frame-keyboard (sinowealth-g5kb family) on stdout.
+prints a board file for facet-keyboard (sinowealth-g5kb family) on stdout.
 
   tools/kbini2board.py --id aula-f65 --vendor AULA --source "AULA F65 driver.exe (aulastar.com)" KB.ini [more KB.ini]
 
@@ -19,7 +19,7 @@ import re
 import statistics
 import sys
 
-# Windows virtual-key codes in KB.ini -> frame-keyboard key ids (xkb names, lower case)
+# Windows virtual-key codes in KB.ini -> facet-keyboard key ids (xkb names, lower case)
 VK = {
     0x08: "backspace", 0x09: "tab", 0x0D: "return", 0x13: "pause", 0x14: "caps_lock", 0x1B: "esc",
     0x20: "space", 0x21: "prior", 0x22: "next", 0x23: "end", 0x24: "home", 0x25: "left",

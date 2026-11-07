@@ -6,13 +6,13 @@
 # The folder holds one sub-folder per installer, unpacked with innoextract (never run them):
 #   innoextract -s -d <folder>/aula-f65 "AULA F65 driver.exe"
 # The installers come from https://www.aulastar.com/keyboard/ (Driver links). The vendor files
-# themselves stay out of this repo; only what frame-keyboard needs ends up in boards/.
+# themselves stay out of this repo; only what facet-keyboard needs ends up in boards/.
 # aula-f75 keeps its hand-drawn top row (the picture in the app is not to scale there).
 set -euo pipefail
 
 src=${1:?folder with the unpacked installers}
 here=$(dirname "$(readlink -f "$0")")
-out=$here/../keyboard/.local/share/frameshell/keyboard/boards
+out=$here/../keyboard/.local/share/facet/keyboard/boards
 py=${PYTHON:-python3}
 
 board() {
